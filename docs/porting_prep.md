@@ -1,58 +1,71 @@
-# Quartus → Vivado 移植准备清单（Phase 2 预研）
+# Quartus → Vivado porting checklist (Phase 2 pre-study)
 
-在 Vivado 到位前完成的离线分析。结论：**移植面比预想小得多**——NEORV32 核 vendor-neutral 且自带
-官方 Vivado IP 流程，真正要改的 Altera 专属构造只有寥寥几处。
+Offline analysis done before Vivado was available. Conclusion: **the porting surface is much
+smaller than expected** — the NEORV32 core is vendor-neutral and ships an official Vivado IP flow,
+and the only Altera-specific constructs that actually need changing are a handful.
 
-来源（只读副本）：`rtl_src/neorv32_tpu/`（NEORV32 核 + TPU，选定路线）、`rtl_src/riscv_tpu_demo/`（PicoRV32 备选）。
-文件普查：VHDL 70、Verilog 18、SV 0、`.mif/.hex` 0（仓库内）、`.qsf/.qip` 0。
+Sources (read-only copies): `rtl_src/neorv32_tpu/` (NEORV32 core + TPU, the chosen route),
+`rtl_src/riscv_tpu_demo/` (PicoRV32 fallback). File census: 70 VHDL, 18 Verilog, 0 SV,
+0 `.mif/.hex` (in-repo), 0 `.qsf/.qip`.
 
-## 1. NEORV32 软核 —— 几乎零成本
+## 1. NEORV32 soft-core — near-zero cost
 
-- core `.vhd` 内**无** `altsyncram / altera_mf / lpm_* / altpll` 真例化（grep 实测为空）；命中只在注释/文档。
-- **自带官方 Vivado 集成**：`rtl_src/neorv32_tpu/neorv32/rtl/system_integration/neorv32_vivado_ip.tcl`
-  + `neorv32_vivado_ip.vhd` + `docs/userguide/packaging_vivado.adoc`。→ 直接用厂商支持的流程把核打成 Vivado IP。
-- RAM/ROM init 走 `neorv32_imem_image.vhd` / `neorv32_bootrom_image.vhd`（VHDL 数组），Vivado 自动推断 BRAM。
-- **动作**：用 `neorv32_vivado_ip.tcl` 打包；启用 `CPU_FAST_MUL_EN=true`（Zynq DSP 充裕，EP4CE6 上是关的）。
+- The core `.vhd` files contain **no** real `altsyncram / altera_mf / lpm_* / altpll`
+  instantiations (grep came back empty); the hits were only in comments/docs.
+- **Ships official Vivado integration**: `rtl_src/neorv32_tpu/neorv32/rtl/system_integration/neorv32_vivado_ip.tcl`
+  + `neorv32_vivado_ip.vhd` + `docs/userguide/packaging_vivado.adoc` → use the vendor-supported
+  flow to package the core as a Vivado IP.
+- RAM/ROM init uses `neorv32_imem_image.vhd` / `neorv32_bootrom_image.vhd` (VHDL arrays); Vivado
+  infers BRAM automatically.
+- **Action**: package with `neorv32_vivado_ip.tcl`; enable `CPU_FAST_MUL_EN=true` (DSPs are
+  plentiful on Zynq; this was off on the EP4CE6).
 
-## 2. TPU（systolic + LUT mem）—— 普通 Verilog，一处属性改动
+## 2. TPU (systolic + LUT mem) — plain Verilog, one attribute change
 
-文件：`rtl_src/neorv32_tpu/rtl/{tpu_accel.v, systolic_array_4x4.v, pe.v, wb_tpu_accel.v}`。
+Files: `rtl_src/neorv32_tpu/rtl/{tpu_accel.v, systolic_array_4x4.v, pe.v, wb_tpu_accel.v}`.
 
-- **`pe.v` 乘法器**（唯一明确的 Altera→Xilinx 代码改动）：
-  源用 `(* multstyle = "logic" *)`（注释直言："DSP placement fails with 16 PEs + 26 M9K" —— EP4CE6 资源
-  逼出来的 LUT 乘法）。Zynq 有 80 个 DSP48E1，应反过来**用 DSP**：
-  `(* multstyle="logic" *)` → `(* use_dsp = "yes" *)`（signed 8×8 `w_reg*x_in` 干净映射 DSP48E1）。
-  已移植版见 `rtl/pe.v`。
-- **TPU LUT 内存**（`tpu_accel.v` 0x040–0x43F，256×32b 寄存器数组按 `lut_idx` 索引）：Vivado 从通用
-  Verilog 数组推断 BRAM/分布式 RAM，**无需改写**。注意：源里权重存在 *RAM* 里；Track-B 真·XPART 要把权重
-  搬进 *LUT-INIT*（逻辑），那是 Phase 4 **新增**能力，不在源设计内。
-- **总线**：`wb_tpu_accel.v` 是 Wishbone B.3 子集（XBUS），vendor-neutral。Zynq 侧用 AXI4——
-  做一个 **AXI-Lite ↔ Wishbone 桥**（或把 TPU 直接重封 AXI-Lite 从设备）挂到 PS GP 口。
+- **`pe.v` multiplier** (the only unambiguous Altera→Xilinx code change):
+  the source uses `(* multstyle = "logic" *)` (comment says outright: "DSP placement fails with 16
+  PEs + 26 M9K" — LUT multiply forced by EP4CE6 resource pressure). The Zynq has 80 DSP48E1, so do
+  the opposite and **use DSP**: `(* multstyle="logic" *)` → `(* use_dsp = "yes" *)` (the signed 8×8
+  `w_reg*x_in` maps cleanly to DSP48E1). Ported version is in `rtl/pe.v`.
+- **TPU LUT memory** (`tpu_accel.v` 0x040–0x43F, a 256×32b register array indexed by `lut_idx`):
+  Vivado infers BRAM / distributed RAM from the generic Verilog array, **no rewrite needed**. Note:
+  in the source the weights live in *RAM*; the real Track-B XPART moves weights into *LUT-INIT*
+  (logic), which is a **new** capability added in Phase 4, not present in the source design.
+- **Bus**: `wb_tpu_accel.v` is a Wishbone B.3 subset (XBUS), vendor-neutral. On the Zynq side use
+  AXI4 — add an **AXI-Lite ↔ Wishbone bridge** (or re-wrap the TPU directly as an AXI-Lite slave)
+  hung off a PS GP port.
 
-## 3. 要删除的（Zynq 上由 PS 取代）
+## 3. To delete (replaced by the PS on Zynq)
 
-- **SDRAM 控制器** `sdram_ctrl.v` / `wb_sdram_ctrl.v`：删。软核内存改用 **PS 的 DDR3**（经 AXI 访问，
-  或软核用 PL BRAM 作 IMEM/DMEM、大数据走 PS DDR）。
-- **EPCS / altasmi / ALTREMOTE_UPDATE**：源 NEORV32 路线里若有则删——配置/启动由 Zynq PS（PCAP/QSPI）接管。
-- **PicoRV32 路线**（`riscv_tpu_demo/`）：作为备选保留参考，不进主线。
+- **SDRAM controller** `sdram_ctrl.v` / `wb_sdram_ctrl.v`: delete. Soft-core memory uses the **PS
+  DDR3** instead (accessed over AXI, or the soft-core uses PL BRAM for IMEM/DMEM and bulk data goes
+  to PS DDR).
+- **EPCS / `altasmi` / ALTREMOTE_UPDATE**: delete if present in the NEORV32 route — boot/config is
+  taken over by the Zynq PS (PCAP/QSPI).
+- **PicoRV32 route** (`riscv_tpu_demo/`): kept as a fallback reference, not in the main line.
 
-## 4. 约束与时钟
+## 4. Constraints and clocking
 
-- 无 `.qsf`/SDC 需转译的关键内容（仓库内 0 个）。新写 **`vivado/constraints/ebaz4205.xdc`**：
-  - PS 部分（DDR3/MIO/FCLK）来自 EBAZ4205 既有板配置（FSBL 的 `ps7_init` / 社区 board files），**不要重造**。
-  - PL 时钟用 PS **FCLK_CLK0**（先 50 MHz 对齐原设计，后续可拉高）。
-  - PL 引脚：Phase 1 先最小化（AXI-GPIO），后续按需加。
+- No critical `.qsf`/SDC content to translate (0 in repo). Write a new **`vivado/constraints/ebaz4205.xdc`**:
+  - The PS part (DDR3/MIO/FCLK) comes from the existing EBAZ4205 board config (the FSBL's
+    `ps7_init` / community board files) — **do not recreate it**.
+  - PL clock from PS **FCLK_CLK0** (start at 50 MHz to match the original design; can be raised later).
+  - PL pins: minimal for Phase 1 (AXI-GPIO); add as needed.
 
-## 5. 移植顺序（对应计划 Phase 1→2）
+## 5. Porting order (maps to plan Phases 1→2)
 
-1. Phase 1：纯 PS + AXI-GPIO 的 Hello-PL（不含软核/TPU），先打通 A-route 上板回路（M1）。
-2. Phase 2a：用 `neorv32_vivado_ip.tcl` 打包 NEORV32，PS+NEORV32 跑通固件（UART）。
-3. Phase 2b：移植 TPU（`pe.v` 已改 DSP；LUT mem→BRAM），AXI 挂 PS，跑一次 MNIST tile（M2）。
-4. 可选：systolic 4×4 → 8×8（Zynq 资源足）。
+1. Phase 1: PS + AXI-GPIO only Hello-PL (no soft-core/TPU) — prove the A-route on-board loop first (M1).
+2. Phase 2a: package NEORV32 with `neorv32_vivado_ip.tcl`; bring up PS+NEORV32 running firmware (UART).
+3. Phase 2b: port the TPU (`pe.v` now uses DSP; LUT mem → BRAM), attach AXI to the PS, run one MNIST tile (M2).
+4. Optional: widen the systolic array 4×4 → 8×8 (plenty of Zynq resources).
 
-## 6. 风险/待 Vivado 确认项
+## 6. Risks / items to confirm once Vivado is in
 
-- EBAZ4205 的 PS7 配置（DDR 型号/时序、MIO 映射）需从板上 FSBL 提取或用社区 `.xdc`/board files——
-  Vivado 装好后第一件事就是把 PS7 配对。
-- AXI↔Wishbone 桥的握手细节需仿真验证。
-- `neorv32_vivado_ip.tcl` 可能假设较新 Vivado 版本；2025.2 应兼容，装好即验。
+- The EBAZ4205 PS7 config (DDR model/timing, MIO mapping) must be extracted from the on-board FSBL
+  or taken from community `.xdc`/board files — the first thing to do once Vivado is installed is to
+  pair the PS7.
+- The AXI↔Wishbone bridge handshake details need simulation.
+- `neorv32_vivado_ip.tcl` may assume a newer Vivado version; 2025.2 should be compatible — verify
+  right after install.
