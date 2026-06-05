@@ -1,0 +1,40 @@
+# Vivado build noise
+vivado/**/*.jou
+vivado/**/*.log
+vivado/**/*.str
+vivado/**/.Xil/
+vivado/**/*.cache/
+vivado/**/*.hw/
+vivado/**/*.ip_user_files/
+vivado/**/*.sim/
+vivado/**/*.runs/
+vivado/**/*.gen/
+
+# Large generated bitstreams (keep partial/ recipes, not multi-MB outputs)
+*.bit
+*.bin
+*.rbf
+*.bif
+*.ltx
+
+# prjxray scratch
+*.fasm.tmp
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+*.swp
+.DS_Store
+
+# Installers / scratch (the 363MB Vivado web installer lives here)
+tmp/
+
+# Generated Vivado project trees (keep the build .tcl, not the outputs)
+vivado/*/build/
+
+# Local read-only copies of other projects (kept on disk as porting starting
+# points, never published — they live in their own upstream/sibling repos).
+rtl_src/
+sw_src/
