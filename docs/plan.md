@@ -1,5 +1,34 @@
 # EP4CE6 → Zynq-7010 migration: a real live Xilinx-XPART demo
 
+## Final results (2026-06-06) — project complete, hardware-verified on the EBAZ4205
+
+The migration goal is met: both XPART capabilities that the Cyclone-IV physically could **not**
+do now run **live** on the Zynq, with a measured-boot trust gate and prjxray confirming the edit.
+
+| Phase / milestone | Outcome | Evidence |
+|---|---|---|
+| Step 0 — toolchain | Vivado ML Standard + prjxray (xc7z010 DB) installed on WSL2 | — |
+| Phase 1 — M1 (self-made bitstream) | ✅ done | PS reads PL over AXI live |
+| Phase 2 — M2 (NEORV32 + 4×4 TPU) | ✅ done | PS reads `0x001E0046` |
+| **Phase 3 — M3 (Track A: live DFX module hot-swap)** | ✅ **done** | `0x001E0046`↔`0x00BB00CC` via PCAP, no reset |
+| **Phase 4 — M4 (Track B: live LUT-INIT surgery)** | ✅ **done** | `0x005A004D`→`0x005B004D`; `docs/lut_surgery.md` |
+| Phase 5 — M5 (measured-boot trust anchor) | ✅ done | tampered bitstream refused; `docs/measured_boot.md` |
+| Task #8 pt.2 — full prjxray prediction | ✅ done | prjxray names `CLBLM_R_X17Y21.SLICEL_X1.ALUT.INIT[1]` |
+| Task #8 pt.1 — ICAP self-reconfig *from inside the fabric* | ⛔ **hard Zynq-7 wall on this board** | investigated 3 ways; `docs/icap_investigation.md` |
+
+**Scope note vs the plan below:** the headline LUT-INIT edit (Track B / M4) is achieved over
+**PCAP** (`fpga loadbp`) — *live*, no cold boot — which already clears the EP4CE6 ceiling. Doing the
+*same* edit over **ICAP from inside the fabric** (the plan's stretch goal, Task #8 pt.1) was
+attempted exhaustively (custom XBUS→ICAPE2 controller + Xilinx AXI HWICAP, PS- and PL-driven) and
+hit a genuine board-specific wall on this miner-FSBL/U-Boot XC7Z010 — documented with concrete
+findings and future-work in `docs/icap_investigation.md`. The DFX flow was left at the proven M4
+state. Phase 5's trust anchor is realized host-side (`scripts/measured-load.py`) rather than as a
+PS-side C program, per the plan's "no eFUSE / keep JTAG recovery" constraint.
+
+Repo: `github.com/14sea/zynq-xpart`. See the root `README.md` results table + Build/reproduce.
+
+---
+
 ## Context (why this)
 
 **"XPART" = Xilinx Partial Reconfiguration Toolkit** (derived from JBits, ICAP-based runtime
