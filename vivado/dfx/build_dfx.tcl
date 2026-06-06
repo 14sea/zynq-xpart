@@ -68,12 +68,20 @@ create_partition_def -name tpu_pd -module tpu_rp
 create_reconfig_module -name rm1_tpu -partition_def [get_partition_defs tpu_pd] -define_from tpu_rp
 create_reconfig_module -name rm2_alt -partition_def [get_partition_defs tpu_pd] -top tpu_rp
 add_files -norecurse -of_objects [get_reconfig_modules rm2_alt] $root/rtl/dfx/tpu_rp_rm2_alt.v
+create_reconfig_module -name rm_lut -partition_def [get_partition_defs tpu_pd] -top tpu_rp
+add_files -norecurse -of_objects [get_reconfig_modules rm_lut] $root/rtl/dfx/tpu_rp_rm_lut.v
+create_reconfig_module -name rm_lut_b -partition_def [get_partition_defs tpu_pd] -top tpu_rp
+add_files -norecurse -of_objects [get_reconfig_modules rm_lut_b] $root/rtl/dfx/tpu_rp_rm_lut_b.v
 create_pr_configuration -name cfg1 -partitions [list $rp_cell:rm1_tpu]
 create_pr_configuration -name cfg2 -partitions [list $rp_cell:rm2_alt]
+create_pr_configuration -name cfg3 -partitions [list $rp_cell:rm_lut]
+create_pr_configuration -name cfg4 -partitions [list $rp_cell:rm_lut_b]
 add_files -fileset constrs_1 -norecurse $origin/pblock_rp.xdc
 
 set_property PR_CONFIGURATION cfg1 [get_runs impl_1]
 create_run impl_2 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg2
+create_run impl_3 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg3
+create_run impl_4 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg4
 
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
@@ -83,6 +91,12 @@ puts "=== impl_1 (cfg1): [get_property STATUS [get_runs impl_1]] ==="
 launch_runs impl_2 -to_step write_bitstream -jobs 8
 wait_on_run impl_2
 puts "=== impl_2 (cfg2): [get_property STATUS [get_runs impl_2]] ==="
+launch_runs impl_3 -to_step write_bitstream -jobs 8
+wait_on_run impl_3
+puts "=== impl_3 (cfg3 lut A): [get_property STATUS [get_runs impl_3]] ==="
+launch_runs impl_4 -to_step write_bitstream -jobs 8
+wait_on_run impl_4
+puts "=== impl_4 (cfg4 lut B): [get_property STATUS [get_runs impl_4]] ==="
 puts "=== bitstreams ==="
-foreach b [glob -nocomplain $bdir/$proj.runs/impl_1/*.bit $bdir/$proj.runs/impl_2/*.bit] { puts "  $b" }
+foreach b [glob -nocomplain $bdir/$proj.runs/impl_1/*.bit $bdir/$proj.runs/impl_2/*.bit $bdir/$proj.runs/impl_3/*.bit $bdir/$proj.runs/impl_4/*.bit] { puts "  $b" }
 exit

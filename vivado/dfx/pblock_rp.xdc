@@ -11,3 +11,7 @@ resize_pblock [get_pblocks pblock_rp] -add {RAMB18_X1Y0:RAMB18_X2Y19}
 resize_pblock [get_pblocks pblock_rp] -add {RAMB36_X1Y0:RAMB36_X2Y9}
 set_property RESET_AFTER_RECONFIG true [get_pblocks pblock_rp]
 set_property SNAPPING_MODE ON [get_pblocks pblock_rp]
+
+# Phase 4 (LUT-INIT surgery): disable bitstream CRC so a host-edited LUT INIT in
+# the partial bitstream still loads (no CRC recompute needed).
+set_property BITSTREAM.GENERAL.CRC Disable [current_design]
