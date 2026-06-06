@@ -39,8 +39,18 @@ fpga loadbp LUT_A (Y=0x5A)   -> md 0x41200000 = 0x005A004D
 fpga loadbp hand-patched     -> md 0x41200000 = 0x005B004D   (LUT INIT edited by hand)
 ```
 
-## Deferred to the very end (the "original" M4, task #8)
+## prjxray cross-validation (task #8 part 2 — DONE 2026-06-06)
+`scripts/prjxray-fasm.sh` decodes a partial bitstream to FASM (prjxray + the
+`xc7z010` tilegrid/segbits). Diffing the FASM of LUT_A vs the hand-patched partial
+yields **exactly one** added feature:
+```
+CLBLM_R_X17Y21.SLICEL_X1.ALUT.INIT[1]
+```
+`CLBLM_R_X17Y21` holds `SLICE_X24Y21`(SLICEM) + `SLICE_X25Y21`(SLICEL=`SLICEL_X1`),
+so this is l0's A6LUT `INIT[1]` — exactly the bit the controlled-diff located and the
+hand-patch flipped. prjxray independently names the edited LUT truth-table bit:
+the bitstream format is fully reverse-engineered (the Track-B premise), confirmed.
+
+## Still deferred (task #8 part 1)
 - **ICAP self-reconfiguration**: drive an AXI HWICAP from the PL so the soft-core
   pushes the edited frame from *inside* the chip (vs PCAP/`loadbp` from the PS here).
-- **Full prjxray prediction**: compute the exact frame/bit from `l0`'s placement via
-  tilegrid+segbits as an independent locate, cross-checked against the diff method.
