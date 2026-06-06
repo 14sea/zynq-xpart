@@ -56,12 +56,15 @@ only inside this directory — **never modify any file in those source projects*
 
 ## Build / reproduce
 Two dependencies are kept **out of the repo** (gitignored) because they're large upstream
-trees, not project-authored code — recreate them locally:
-- **NEORV32** → `rtl_src/neorv32_tpu/neorv32/` : clone [stnolting/neorv32](https://github.com/stnolting/neorv32),
-  then apply the picolibc-errno guard to `rtl/core/neorv32_newlib.c` (see `docs/firmware_build.md`).
-  `vivado/dfx/build_dfx.tcl` reads its `rtl/file_list_soc.f` from there.
-- **Firmware build tree** → `sw_src/neorv32_tpu_sw/tpu_test/` : a NEORV32 sw-example layout; copy
-  `sw/tpu_firmware/{main.c,Makefile}` into it and `make` (see `sw/tpu_firmware/README.md`).
+trees, not project-authored code: the **NEORV32 source** (`rtl_src/neorv32_tpu/neorv32/`, used
+by `vivado/dfx/build_dfx.tcl`) and the **firmware build tree** (`sw_src/neorv32_tpu_sw/tpu_test/`).
+Recreate both with one idempotent helper:
 
-Then: `cd vivado/dfx && vivado -mode batch -source build_dfx.tcl` (DFX full + partials);
-flash/observe over UART with `scripts/uboot-fpga-load.py` + `scripts/measured-load.py`.
+```bash
+scripts/setup-deps.sh          # clones NEORV32 (pinned ~v1.12.9) + picolibc patch, scaffolds firmware
+```
+
+It prints the exact `make` (firmware) and `vivado -mode batch -source build_dfx.tcl` (DFX full +
+partials) commands. Details: `docs/firmware_build.md`, `sw/tpu_firmware/README.md`. Flash/observe
+over UART with `scripts/uboot-fpga-load.py` + `scripts/measured-load.py`; prjxray cross-check via
+`scripts/prjxray-fasm.sh` (paths overridable with `PRJXRAY=` / `XRAY_DATABASE_DIR=`).

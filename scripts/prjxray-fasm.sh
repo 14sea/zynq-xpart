@@ -8,8 +8,10 @@
 #   /home/test/prjxray (with .venv: pip install simplejson fasm intervaltree pyyaml textx)
 #   /home/test/prjxray-db  (f4pga/prjxray-db, has zynq7/xc7z010 tilegrid + segbits)
 set -e
-PRJXRAY=/home/test/prjxray
-export XRAY_DATABASE_DIR=/home/test/prjxray-db
+# Override these if your prjxray / prjxray-db live elsewhere:
+#   PRJXRAY=/path/to/prjxray  XRAY_DATABASE_DIR=/path/to/prjxray-db  prjxray-fasm.sh x.bit
+PRJXRAY=${PRJXRAY:-/home/test/prjxray}
+export XRAY_DATABASE_DIR=${XRAY_DATABASE_DIR:-/home/test/prjxray-db}
 export XRAY_DATABASE=zynq7
 export XRAY_PART=xc7z010clg400-1
 export XRAY_TOOLS_DIR=$PRJXRAY/build/tools
