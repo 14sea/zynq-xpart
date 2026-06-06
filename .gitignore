@@ -33,6 +33,7 @@ tmp/
 
 # Generated Vivado project trees (keep the build .tcl, not the outputs)
 vivado/*/build/
+vivado/*/ps_build/
 
 # Local read-only copies of other projects (kept on disk as porting starting
 # points, never published — they live in their own upstream/sibling repos).
