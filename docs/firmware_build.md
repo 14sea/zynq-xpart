@@ -1,8 +1,9 @@
 # NEORV32 firmware build (M2 and later)
 
-The firmware sources and the NEORV32 core copy live under `sw_src/` and
-`rtl_src/` (both gitignored — local porting copies). This records the recipe so
-it is reproducible.
+The **canonical firmware source is committed at `sw/tpu_firmware/`**; the NEORV32 core
+copy and the build working-tree live under the gitignored `rtl_src/` and `sw_src/`. Run
+**`scripts/setup-deps.sh`** to recreate both (clone NEORV32 + apply the patch below +
+scaffold the build tree). This records the recipe so it is reproducible.
 
 ## Toolchain
 - `riscv64-unknown-elf-gcc` (Ubuntu `gcc-riscv64-unknown-elf`, 13.2) — compiler only.

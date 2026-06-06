@@ -28,8 +28,11 @@ physically could not do.
 3. `fpga loadbp` the RM2 **partial** bitstream → PS reads 0x00BB00CC, with the PS
    and NEORV32 never reset. (miner U-Boot supports `fpga loadbp`, confirmed in M1.)
 
-## Vivado DFX flow (project mode)
-1. Build the static BD (PS7 + neorv32_soc_dfx + axi_gpio); set system_wrapper top.
+## Vivado DFX flow (project mode) — as built in `vivado/dfx/build_dfx.tcl`
+1. A **PS-only BD** (PS7 + axi_gpio mailbox) plus an **RTL top `dfx_top`** that
+   instantiates the BD wrapper and `neorv32_soc_dfx`, so the RP cell
+   `u_soc/wb_tpu_inst` is a true top-level partition. (Putting the RP inside a BD
+   module-ref *hid* the cell — using an RTL top was the key fix.) `set_property PR_FLOW 1`.
 2. Mark the RP cell `HD.RECONFIGURABLE`; `create_partition_def` / `create_reconfig_module`
    for RM1 and RM2; `create_pr_configuration` config_1 (RM1) and config_2 (RM2).
 3. Floorplan a **Pblock** for the RP covering enough DSP48 (≥16 for RM1) + BRAM
@@ -40,8 +43,15 @@ physically could not do.
 
 ## Notes / risks
 - XC7Z010 floorplan: 4 clock regions (X0Y0/X1Y0/X0Y1/X1Y1), each 1100 SLICE +
-  20 DSP48 + BRAM. RM1 needs ~16 DSP / 1 BRAM / ~700 LUT → **Pblock the RP to
-  CLOCKREGION_X1Y0** (whole region; snaps to frame boundaries cleanly). The static
-  (NEORV32 + PS interface) places in the other regions; PS7 is hard (in the PS).
+  20 DSP48 + BRAM. **As built**, `pblock_rp.xdc` floorplans the RP by explicit
+  SLICE/DSP48/RAMB **site ranges** in the X1Y0 region — *not* a `CLOCKREGION_X1Y0`
+  rectangle, which fails because it includes the central clock spine (illegal in a
+  Pblock). `RESET_AFTER_RECONFIG true` + `SNAPPING_MODE ON`. The static (NEORV32 + PS
+  interface) places elsewhere; PS7 is hard (in the PS).
 - Partial bitstream loaded over UART ymodem like M1/M2 (`uboot-fpga-load.py --op loadbp`).
 - This is the most involved phase; expect iteration on the Pblock + DFX runs.
+
+## Extended in M4/M5
+The same DFX flow was extended to **4 PR configurations** — RM1, RM2, and the
+LUT-table RMs `rm_lut` / `rm_lut_b` — for the live LUT-INIT surgery (M4) and the
+measured-boot allowlist (M5). See `docs/lut_surgery.md` and `docs/measured_boot.md`.

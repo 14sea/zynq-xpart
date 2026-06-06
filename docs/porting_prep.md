@@ -8,6 +8,12 @@ Sources (read-only copies): `rtl_src/neorv32_tpu/` (NEORV32 core + TPU, the chos
 `rtl_src/riscv_tpu_demo/` (PicoRV32 fallback). File census: 70 VHDL, 18 Verilog, 0 SV,
 0 `.mif/.hex` (in-repo), 0 `.qsf/.qip`.
 
+> **As built (diverged from this pre-study):** the SoC instantiates `neorv32_top` **directly in
+> RTL** (`rtl/neorv32_soc_dfx.vhd`) rather than via the packaged Vivado IP; the TPU stayed on
+> NEORV32's **XBUS** with results surfaced to the PS through a **mailbox → AXI-GPIO** (read at
+> `0x41200000`) rather than re-wrapped as an AXI-Lite slave on a PS GP port; and the systolic array
+> stayed **4×4** (the 8×8 widening in §5/§2 was not pursued). The DSP/BRAM/delete actions below all hold.
+
 ## 1. NEORV32 soft-core — near-zero cost
 
 - The core `.vhd` files contain **no** real `altsyncram / altera_mf / lpm_* / altpll`
