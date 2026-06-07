@@ -27,15 +27,17 @@ EBAZ4205 bring-up).
 | **M4 (Track B)** | **Live LUT-INIT surgery** — a LUT6 truth table hand-edited in the partial and applied live via `loadbp` (`0x005A004D`→`0x005B004D`) | ✅ [docs/lut_surgery.md](docs/lut_surgery.md) |
 | M5 | Measured-boot trust gate — a non-allowlisted (tampered) bitstream is refused | ✅ [docs/measured_boot.md](docs/measured_boot.md) |
 | #8 pt.2 | **prjxray independently names the edited bit** (`CLBLM_R_X17Y21.SLICEL_X1.ALUT.INIT[1]`) | ✅ |
-| #8 pt.1 | **ICAP self-reconfig — live LUT-INIT edit over HWICAP-driven ICAP from inside the fabric** (`0`↔`1`, no reset, no PCAP) | ✅ [docs/icap_investigation.md](docs/icap_investigation.md) |
+| #8 pt.1 | **ICAP self-reconfig — live LUT-INIT edit over ICAP from inside the fabric** (`0`↔`1`, no reset, no PCAP); PS-driven (HWICAP) **and** soft-core-driven (NEORV32→ICAPE2, no PS in the loop) | ✅ [docs/icap_investigation.md](docs/icap_investigation.md) |
 
 The core migration goal is met: both XPART tracks that the Cyclone-IV physically could **not**
 do — live module swap (Track A) and live single-LUT-truth-table editing (Track B) — run live on
 the Zynq, with a measured-boot gate and prjxray confirming the exact edited bit. The headline
 refinement, doing the LUT edit over **ICAP from inside the fabric** (vs PCAP), was first
 believed to be a hard board-specific wall but is now **solved** (2026-06-07): a clean,
-deterministic, reversible single-frame LUT-INIT edit runs over the AXI-HWICAP-driven ICAPE2,
-the fabric rewriting its own CRAM with no reset and no PCAP/`loadbp`. The one missing piece was
+deterministic, reversible single-frame LUT-INIT edit runs over ICAPE2, the fabric rewriting its
+own CRAM with no reset and no PCAP/`loadbp`. Two flavours work — **PS-driven** via AXI HWICAP,
+and the headline **soft-core-driven** where the in-PL **NEORV32** reads the frame from a shared
+BRAM and drives ICAPE2 itself (no PS in the reconfiguration loop). The one missing piece was
 handing the config-engine MUX to ICAP via `devcfg.CTRL[PCAP_PR]` — see
 [docs/icap_investigation.md](docs/icap_investigation.md) for the full recipe.
 

@@ -1,8 +1,10 @@
 # Task #8 part 1 — ICAP self-reconfiguration: investigation & findings
 
 > **STATUS: SOLVED on this board (2026-06-07).** A clean, deterministic, reversible
-> live LUT-INIT edit now runs over **ICAP from inside the fabric** (HWICAP-driven) on
-> this exact XC7Z010/EBAZ4205 + miner-FSBL/U-Boot setup — no reset, no PCAP/`loadbp`.
+> live LUT-INIT edit now runs over **ICAP from inside the fabric** on this exact
+> XC7Z010/EBAZ4205 + miner-FSBL/U-Boot setup — no reset, no PCAP/`loadbp`. Both a
+> PS-driven (AXI HWICAP) flavour AND the headline soft-core-driven flavour (in-PL
+> NEORV32 → ICAPE2, no PS in the reconfiguration loop, T2.3) are hardware-verified.
 > See **[RESOLUTION](#resolution-2026-06-07--icap-from-inside-works)** below for the
 > full working recipe and the one missing piece (`devcfg.CTRL[PCAP_PR]`) that defeated
 > all earlier attempts. The sections below the resolution are the original (pre-solution)
@@ -78,13 +80,36 @@ stream the A-frame → **0**; B again → **1** — deterministic, reversible, t
 never reset. Live LUT truth-table surgery over ICAP from inside the fabric. The config
 engine was driven by PL logic (HWICAP→ICAPE2); the PS only fed the word stream over AXI.
 
-### Status of the remaining "purity" step and T3
-- **T3 (clean non-miner FSBL pivot) is now UNNECESSARY** — its entire premise (that the
-  miner U-Boot blocked PL-AXI writes / HWICAP) is disproven.
-- **T2.3 (optional): NEORV32-driven, no-PS HWICAP.** Wire the in-PL soft-core's XBUS→AXI4
-  bridge to HWICAP and stage the frame words in PL BRAM, so the fabric rewrites itself with
-  no PS in the loop at all. Approach #3 below stalled on "first HWICAP access never acks" —
-  almost certainly the same unconnected-`icap_clk` integration bug, now known-fixable.
+### T2.3 — NEORV32 soft-core self-modifies via ICAP, no PS in the reconfig loop (DONE)
+The headline "purity" step is also achieved on hardware. The in-PL **NEORV32** soft-core
+streams the single-frame write to a custom **`rtl/xbus_icap.v`** controller → **ICAPE2**,
+rewriting the LUT6's CRAM frame itself. The PS is never in the reconfiguration loop: it
+only (a) stages the frame payload into a shared AXI-Lite framebuf and (b) grants ICAP the
+config engine (`PCAP_PR=0`) and observes. (Staging-then-fabric-executes is the external
+review's DDR-staging pattern; it also sidesteps the non-convergence below.)
+- **Build/RTL:** `vivado/t23/build_t23b.tcl` → `rtl/neorv32_soc_icap.vhd` (NEORV32 +
+  `xbus_icap`@0xF3000000 + `lut_probe` readback@0xF4000000 + mailbox@0xF1000000 +
+  framebuf read@0xF5000000) + `rtl/axil_framebuf.vhd` (AXI-Lite slave + 256×32 RAM, PS
+  writes @0x40000000, NEORV32 reads). Firmware: `sw/icap_firmware/main.c`.
+- **Recipe:** load `lut_A.bit` (CRC-disabled, INIT[0]=0) → confirm mbox heartbeat →
+  `scripts/framebuf-load.py <seq.bin> 0x40000000` (PS stages the host-extracted seq;
+  word[0]=length last = ready flag) → `mw 0xF8007000 0x4400e07f` (PCAP_PR=0).
+- **Result (hardware):** lut_o@0x41200000 → **1**; mbox@0x41200008 = `0xC3<hb>0101`
+  (winning **swap mode 1** = per-byte bit-reverse, lut bit = 1). NEORV32 read the payload
+  from BRAM, drove ICAPE2, flipped the LUT — the fabric rewrote its own configuration.
+- **`xbus_icap` is deterministic here** (approach #1's non-determinism was GRESTORE in the
+  sequence + the config MUX never handed to ICAP). The proven sequence has NO GRESTORE and
+  runs with `PCAP_PR=0`; swap mode 1 hits the LUT cleanly on the first try.
+- **Non-convergence note (why payload is PS-staged, not baked in IMEM):** baking the frame
+  into the NEORV32 IMEM image does NOT converge — the target LUT frame shares its CLB
+  column's INT routing bits, and any firmware-only IMEM change shifts that routing, so the
+  baked frame goes stale every build (verified: even with the LUT LOC-pinned, two builds
+  differing only in IMEM content gave 203 differing frame bytes). PROHIBITing the column's
+  slices doesn't help (the bits are interconnect routing, not slice config). Staging the
+  payload from the PS at runtime (extracted from the loaded bitstream) decouples it.
+
+- **T3 (clean non-miner FSBL pivot) is UNNECESSARY** — its entire premise (that the miner
+  U-Boot blocked PL-AXI writes / HWICAP) is disproven.
 
 ### HWICAP frame readback (open, non-blocking)
 HWICAP frame *readback* (CR.Read with SZ) still returns empty-FIFO `0xffffffd9` rather than
