@@ -61,3 +61,40 @@ a hand-rolled feeder. The plan flagged Phase-4 ICAP as the high-risk item — co
 - Try the other ICAP site (`ICAP_X0Y0`) and an explicit STARTUPE2/EOS wiring.
 - Cross-check the single-frame write sequence against a full prjxray `fasm2frames`
   reconstruction of the frame to rule out any sequence-encoding residue.
+
+## External review (2026-06-07): "free the config MUX" proposal — evaluated, partial value
+
+An external LLM proposed that the wall is the Linux `xilinx-devcfg.c` driver holding
+`DEVCFG.CTRL[PCAP_MODE]=1` so the config MUX stays owned by PCAP and ICAPE2 never gets
+ready, with two fixes: (1) a kernel module (LKM) that `ioremap(0xF8007000)`s DEVCFG and
+clears the PCAP-route bit to hand off to ICAP, then restores it; (2) `&devcfg { status =
+"disabled"; }` in the DTS so Linux never grabs the config bus. Verdict: **right
+neighborhood, wrong diagnosis for this board, and it misses the two blockers we actually
+found.** Keep only the parts marked "useful" below.
+
+- **Frame mismatch (undercuts the whole premise):** all three attempts above ran from the
+  **miner U-Boot**, bare-metal NEORV32 in PL — **no Linux, no `xilinx-devcfg` driver in
+  play**. The "Linux driver locks PCAP_MODE" mechanism does not map to our test bench.
+- **The routing handoff was already done:** approach #1 already set **`PCAP_PR=0`** (the
+  bit that actually selects ICAP for PR) and confirmed the MUX switched (PCAP `loadbp`
+  then stopped working). That was *not* the blocker. Also note the bit numbers: routing
+  select is **`PCAP_PR` = bit 27 (`0x08000000`)**, not `PCAP_MODE` = bit 26 (`0x04000000`,
+  merely "PCAP interface enable") — the proposal cleared the wrong bit.
+- **"ICAP is default-open without PS" is wrong for Zynq-7000:** post-reset `PCAP_PR`
+  defaults to 1 (PCAP); the FSBL loads the PL over PCAP. ICAP is never the default owner —
+  you must clear `PCAP_PR` explicitly. So DTS-disabling devcfg stops Linux from *re-grabbing*
+  the bus but does **not** *grant* ICAP; the boot chain already left `PCAP_PR=1`.
+- **It misses our real two blockers:** (a) the HWICAP **AXI slave never acks / writes don't
+  land** under this U-Boot (a PL-AXI-write / IP-out-of-reset problem, independent of the
+  config MUX — the HWICAP register file should ack regardless of ICAP grant); (b) the
+  custom controller proved ICAP can *perturb* the fabric but **won't cleanly sync a single
+  frame** (readback `0xFFFFFF__`), which points at **EOS / STARTUPE2 + the sync-word/dummy-
+  pad/single-frame command sequence** — the proposal never addresses startup state at all.
+- **Useful part (only under a clean-Linux pivot):** *if* we move off the miner U-Boot to our
+  own clean FSBL/Linux (our top future-work item), the LKM handshake *pattern* (PS frees the
+  config path → signals PL → restores after) is sound, and the DDR3-staging architecture
+  (Linux DMAs the `.bit` to a fixed phys addr, hands the address to PL) fits our
+  "keep PS able to read partials" stance. To use it, apply three corrections: clear
+  **`PCAP_PR` (bit 27)** not bit 26; add **explicit EOS/STARTUPE2 wait + the ICAP sync
+  sequence**; and **bring HWICAP up standalone first** (confirm PL-AXI writes land) before
+  attempting the single-frame write. It does not, on its own, unblock the wall we hit.
