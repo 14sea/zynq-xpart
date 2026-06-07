@@ -27,8 +27,10 @@ both AXI HWICAP (PS-driven) and a custom XBUS→ICAPE2 controller driven by the 
 clean, deterministic single-frame LUT-INIT write — see `docs/icap_investigation.md`. Phase 5's trust
 anchor is realized host-side (`scripts/measured-load.py`) rather than as a PS-side C program, per the
 plan's "no eFUSE / keep JTAG recovery" constraint. Known un-done (low priority, orthogonal to the
-XPART story): the TPU systolic array stayed 4×4 (never widened to 8×8); and ICAP frame *read-back*
-(the M4 oracle-compare nicety) still returns garbage — the write is verified observably instead.
+XPART story): the TPU systolic array stayed 4×4 (never widened to 8×8); and ICAP *frame* read-back
+isn't a clean full-frame capture — the readback **mechanism** is proven (config-register reads e.g.
+IDCODE come back correct with `PCAP_PR=0`), but a full single frame exceeds the HWICAP read-FIFO
+depth, so the M4 oracle byte-compare uses the observable GPIO instead (see `icap_investigation.md`).
 
 Repo: `github.com/14sea/zynq-xpart`. See the root `README.md` results table + Build/reproduce.
 

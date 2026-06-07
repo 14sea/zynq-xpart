@@ -111,10 +111,24 @@ review's DDR-staging pattern; it also sidesteps the non-convergence below.)
 - **T3 (clean non-miner FSBL pivot) is UNNECESSARY** — its entire premise (that the miner
   U-Boot blocked PL-AXI writes / HWICAP) is disproven.
 
-### HWICAP frame readback (open, non-blocking)
-HWICAP frame *readback* (CR.Read with SZ) still returns empty-FIFO `0xffffffd9` rather than
-frame data; left unsolved because the write is the goal and is verified observably via the
-GPIO. The write path is fully proven (a 2-word sync+NOP drains WF→ICAP, CR self-clears).
+### HWICAP readback (mechanism solved; full-frame capture is RF-FIFO-limited)
+Revisited 2026-06-07 (`scripts/hwicap-uart.py readreg|readback`). The earlier "readback
+returns garbage `0xffffffd9`" was **two bugs, both fixed**: (1) readback also needs ICAP to
+own the config engine — it only works with **`PCAP_PR=0`**, same as writes; (2) a single
+`CR.Read` of more words than the **read FIFO depth (~128)** overruns it (the controller does
+**not** back-pressure ICAP), so the tail is garbage.
+- **Config-register readback now works cleanly and deterministically:** `readreg 12` (IDCODE)
+  = **`0x13722093`** (xc7z010), `readreg 7` (STAT) = `0x46107ffc` — correct, repeatable. So the
+  ICAP read path is proven (the FDRO/sync handshake is satisfied; this is the real correction
+  to the old "garbage" conclusion).
+- **Frame readback is RF-FIFO-bound:** the addressed frame comes out behind a ~101-word
+  readback pad, so a full frame (pad + 101 = 202 words) exceeds the ~128-deep RF. Draining in
+  small `CR.Read` chunks reaches past the FIFO and **does** return real frame data (the edited
+  LUT-INIT word was recovered), but the chunked-FDRO boundary **drifts run-to-run** (two
+  back-to-back reads differed by ~18 words), so a clean automated before/after frame compare
+  isn't reliable. The single-frame **write is verified observably via GPIO** regardless. A
+  clean fix would need a deeper HWICAP read FIFO (not a parameter on the stock IP) or a
+  bench-side concurrent RFO drain faster than the ICAP stream.
 
 ---
 

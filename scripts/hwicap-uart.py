@@ -95,30 +95,57 @@ def wf_write(s, words):
 
 # ---- frame readback (7-series, via HWICAP) ----
 def readback(s, far, nwords):
-    # 1. setup sequence -> WF (sync, RCRC, FAR, RCFG, FDRO read header)
+    # minimal 7-series frame readback (no RCRC; FAR then RCFG then FDRO), like the
+    # register read that works. ICAP outputs one pad frame (frame buffer) before the
+    # addressed frame, so callers read (1+frames)*101 words and skip the first 101.
     setup = [
         0xFFFFFFFF,               # dummy
         0xAA995566,               # sync
-        0x20000000, 0x20000000,   # NOP
-        0x30008001, 0x00000007,   # CMD = RCRC
-        0x20000000, 0x20000000,
+        0x20000000,               # NOP
         0x30002001, far,          # FAR = target frame
         0x30008001, 0x00000004,   # CMD = RCFG (read configuration)
-        0x20000000,
+        0x20000000,               # NOP
         0x28006000,               # Type1 read FDRO, 0 words
         0x48000000 | (nwords & 0x07ffffff),  # Type2 read nwords
         0x20000000, 0x20000000,
     ]
     wf_write(s, setup)
-    # 3. pull nwords from ICAP into RF
+    # 3. single CR.Read, drain by polling RFO. Deterministic and correct up to the HWICAP
+    #    read-FIFO depth (~128 words). NOTE: the addressed frame sits behind a ~101-word
+    #    readback pad, so a full single frame (pad+101 = 202) exceeds the RF depth; the
+    #    controller does NOT back-pressure ICAP, so words past the FIFO are lost. Reading in
+    #    small chunks reaches further but the FDRO chunk boundary drifts run-to-run -> not
+    #    deterministic. Use `readreg` (register read, <=FIFO) for a reliable readback check.
     mw1(s, SZ, nwords)
-    mw1(s, CR, 0x2)               # initiate ICAP->RF
-    wait_cr_clear(s, timeout=3.0)
-    # 4. drain RF
-    out = []
-    for k in range(nwords):
-        out.append(md1(s, RF))
+    mw1(s, CR, 0x2)
+    out, t0 = [], time.time()
+    while len(out) < nwords and time.time() - t0 < 40:
+        occ = md1(s, RFO) & 0xffff
+        if occ == 0:
+            if md1(s, CR) == 0:
+                break
+            continue
+        for _ in range(min(occ, nwords - len(out))):
+            out.append(md1(s, RF))
     return out
+
+
+# config registers: CRC0 FAR1 FDRI2 FDRO3 CMD4 CTL0 5 MASK6 STAT7 LOUT8 COR0 9 ... IDCODE 12
+def readreg(s, reg, n=1):
+    """read n words of config register `reg` through ICAP (the simplest readback test).
+    readreg(12) (IDCODE) should return 0x03722093 on xc7z010 if readback works."""
+    setup = [
+        0xFFFFFFFF,                       # dummy
+        0xAA995566,                       # sync
+        0x20000000,                       # NOP
+        0x28000000 | ((reg & 0x3fff) << 13) | (n & 0x7ff),  # Type1 read <reg>, n words
+        0x20000000, 0x20000000, 0x20000000, 0x20000000,
+    ]
+    wf_write(s, setup)
+    mw1(s, SZ, n)
+    mw1(s, CR, 0x2)
+    wait_cr_clear(s, timeout=2.0)
+    return [md1(s, RF) for _ in range(n)]
 
 
 def main():
@@ -127,6 +154,7 @@ def main():
     ap.add_argument('--baud', type=int, default=115200)
     sub = ap.add_subparsers(dest='op', required=True)
     sub.add_parser('regs')
+    rr = sub.add_parser('readreg'); rr.add_argument('reg', type=lambda x: int(x, 0))
     rb = sub.add_parser('readback'); rb.add_argument('far'); rb.add_argument('nwords', type=int)
     rb.add_argument('--out', default='/tmp/hwicap_frame.bin')
     ws = sub.add_parser('writeseq'); ws.add_argument('binfile')
@@ -138,6 +166,12 @@ def main():
     if args.op == 'regs':
         r = dump_regs(s)
         print("  ".join(f"{n}=0x{v:08x}" for n, v in r.items()))
+
+    elif args.op == 'readreg':
+        vals = readreg(s, args.reg)
+        names = {0: 'CRC', 1: 'FAR', 3: 'FDRO', 4: 'CMD', 5: 'CTL0', 7: 'STAT', 12: 'IDCODE'}
+        print(f"[*] reg {args.reg} ({names.get(args.reg,'?')}) = " +
+              " ".join(f"0x{v:08x}" for v in vals))
 
     elif args.op == 'readback':
         far = int(args.far, 16)
