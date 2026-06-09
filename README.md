@@ -5,7 +5,8 @@ liveness": mode-H = `.rbf` LUT surgery + EPCS staging + **cold boot**) — onto 
 XC7Z010**, and use the Zynq's native **ICAP + PCAP + Partial Reconfiguration (DFX)** to achieve,
 for the first time, **live** partial reconfiguration (no halt, no cold boot).
 
-- **Track A (foundation)**: DFX module hot-swap — `fpgautil -b rm.bit -f Partial` (PCAP); the
+- **Track A (foundation)**: DFX module hot-swap over PCAP — the partial bitstream applied live
+  via `fpga loadbp` (U-Boot; how M3 was verified here) or `fpgautil -f Partial` (Linux); the
   static region / PS keep running.
 - **Track B (headline)**: prjxray + ICAP single-frame **LUT-INIT** live edit — bake quantized NN
   weights into LUT truth tables and change them with no resynthesis and no cold boot.
