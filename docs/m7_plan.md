@@ -1,0 +1,289 @@
+# Phase 7 — M7: on-chip training (backprop) — the chip learns by itself
+
+> **STATUS: PLANNED.** Builds on M2 (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU:
+> bias / Leaky-ReLU / requant forward path), M3 (live DFX hot-swap), and M5 (measured-boot gate).
+> M7 is the first milestone that is **not** pure inference: it closes the loop and runs the
+> **backward pass + weight update on the board**, so the EBAZ4205 trains a tiny network end-to-end
+> with **no host doing the math**. tiny-tpu-v2/tiny-tpu is the algorithmic **reference** for the
+> three new pieces (MSE loss, Leaky-ReLU derivative, gradient descent) — **reference only, no RTL
+> vendored** (same policy as M6, see "Licensing / attribution").
+
+## Goal
+
+One sentence: **the board trains a small MLP from scratch using on-fabric forward + backward
+passes and on-fabric weight updates — the headline demo is XOR converging on the EBAZ4205 with
+the host only feeding data and reading the loss curve.**
+
+This lands tiny-tpu's actual differentiator (on-chip *training*, the thing inference-only TPUs and
+the EP4CE6 design never had) on top of our DFX + measured-boot + live-reconfig stack.
+
+## Why training is genuinely harder than M6 (the three hard problems)
+
+M6 was a forward-only composition. Backprop introduces three problems M1–M6 never faced. The plan
+below is organized around solving them, cheapest-risk first.
+
+### Problem 1 — the transpose Wᵀ (turns out to be cheap on *our* array)
+A 2-layer net (the minimum for XOR) needs the input-gradient `δ_prev = Wᵀ · δ` to push error to the
+previous layer. On a generic weight-stationary array transposing W is the classic pain point. **But
+our array loads weights serially by `(w_row_sel, w_col_sel)` and computes `result[i] = Σⱼ W[i][j]·x[j]`
+(see `rtl/systolic_array_4x4.v`).** So computing `Wᵀ·δ` is just **loading the same weights with row/col
+select swapped** (`W[j][i]` into PE`[i][j]`) and feeding `δ` as the activation vector — *no new
+datapath, no second array*. M7 exploits this: the array is reused for **all three** matmuls
+(forward `W·x`, input-grad `Wᵀ·δ`, and — see Problem 3 — the weight-grad outer product).
+
+### Problem 2 — training numerics: INT8 is not enough (precision strategy = QAT-style hybrid)
+Pure INT8 weight updates don't converge: a single SGD step `W -= lr·dW` quantizes to **zero** because
+the gradient·lr is far below 1 LSB of INT8. This is exactly why tiny-tpu uses **16-bit fixed-point**.
+We **keep the INT8 forward array** (so M6/M2 stay valid) and adopt the standard
+**quantization-aware-training (QAT) split**:
+- **Master weights** live in **higher precision** (Q8.8 / INT16, or INT32 accumulator) in BRAM.
+- Gradients accumulate into the **master** copy at full precision.
+- The forward matmul uses an **INT8 quantized view** of the master weights (round + clamp) loaded
+  into the array — identical to the M2/M6 INT8 datapath.
+- The activation/delta path (`δ`, loss grad) is carried in the same Q-format as the master weights.
+
+This is the single most important M7 decision and it is **made**: hybrid QAT, INT8 forward + INT16/Q8.8
+master. We do **not** widen the systolic array to 16-bit (that would break the M6 contract and blow
+the DSP budget — see sizing).
+
+### Problem 3 — gradient storage + the weight-grad outer product
+`dW = δ ⊗ xᵀ` (rank-1 outer product, `dW[i][j] = δ[i]·x[j]`) and the master-weight update need writable
+high-precision storage the LUT-baked M4 path **cannot** provide. **M7 weights live in BRAM/registers,
+not LUT-INIT** — the M4 ICAP/LUT-edit stunt is *orthogonal* and explicitly not used here (you would
+otherwise be doing an ICAP frame write per SGD step, which is absurd). The outer product itself is 16
+MACs for 4×4; it is cheap enough to start in NEORV32 software and later fold onto the array (load `δ`
+stationary, stream `x`).
+
+## Math we implement (per training step, 2-layer leaky-MLP, MSE loss)
+
+```
+Forward:   z1 = W1·x + b1 ;  h = leaky(z1)
+           z2 = W2·h + b2 ;  y = leaky(z2)
+Loss:      L  = ½·Σ (y − t)²                          (MSE)              ← tiny-tpu loss
+Backward:  δ2 = (y − t) ⊙ leaky'(z2)                                     ← tiny-tpu relu-deriv
+           dW2 = δ2 ⊗ hᵀ ;  db2 = δ2
+           δ1 = (W2ᵀ · δ2) ⊙ leaky'(z1)              ← transpose reuse (Problem 1)
+           dW1 = δ1 ⊗ xᵀ ;  db1 = δ1
+Update:    W ← W − lr·dW ;  b ← b − lr·db             (on master weights) ← tiny-tpu grad-descent
+```
+`leaky'(z) = 1 for z≥0, else 2⁻ᵏ` — the same `VPU_ALPHA` shift `k` as M6's forward leaky ReLU, so the
+forward and backward activations are consistent by construction.
+
+## New hardware vs software split (staged — start SW-heavy, then offload)
+
+The array does the heavy matmuls; everything element-wise can start in NEORV32 firmware and migrate
+to hardware once convergence is proven. This staging is the de-risking spine of M7.
+
+| Op | M7.0–7.1 (prove it) | M7.2+ (offload) |
+|---|---|---|
+| forward `W·x`, `W·h` | **array** (M2/M6) | array |
+| input-grad `Wᵀ·δ` | **array** (transpose-load) | array |
+| weight-grad `δ⊗xᵀ` | NEORV32 SW | array (δ stationary) |
+| loss `½Σ(y−t)²`, `dL/dy` | NEORV32 SW | HW `loss` unit (ref tiny-tpu) |
+| leaky' gate | NEORV32 SW | HW in VPU (ref tiny-tpu) |
+| weight update `W−=lr·dW` | NEORV32 SW (master in BRAM) | HW `grad_descent` unit |
+| training loop / lr schedule | NEORV32 firmware (always) | firmware |
+
+## New XBUS registers (appended above the M6 map; M6 used through 0x50)
+
+Existing 0x00–0x14 (matmul ctrl) / 0x20–0x2C (RES0–3) / 0x30–0x4C (VPU) / 0x50 (VPU_ALPHA) are
+**preserved** for forward back-compat.
+
+| Offset | Name | R/W | Description |
+|--------|------|-----|-------------|
+| 0x54 | TRAIN_CTRL | W | [0]=train enable, [1]=transpose-load mode (load Wᵀ), [2]=accumulate-grad, [3]=apply-update |
+| 0x58 | LR_SHIFT | W | learning-rate as arithmetic right-shift `s`: `W −= dW >>ₐ s` (power-of-two lr, avoids a divider) |
+| 0x5C | TARGET0–3 | W | per-lane INT/Q target `t` for the loss/δ computation (lane in W_ADDR[1:0]) |
+| 0x60–0x6C | DELTA0–3 | R/W | per-lane δ (Q-format); R after a backward matmul, W to seed the output-layer δ |
+| 0x70 | LOSS | R | accumulated MSE loss for the current batch (Q-format) — read for the convergence curve |
+| 0x74–0x7C | WMASTER_LO/HI window | R/W | windowed read/write of the **master** high-precision weights (debug + checkpoint) |
+
+Software contract: firmware sets weights/inputs/target, runs forward (M6 path), reads `y`/`LOSS`,
+seeds `DELTA`, toggles `TRAIN_CTRL` transpose-load + accumulate + apply per the math above, polls
+`STATUS.done` (which, as in M6, must cover the full pipeline drain). Loop over samples/epochs in
+firmware.
+
+## Phased plan (sub-milestones)
+
+### M7.0 — fixed-point training oracle + bring-up in firmware (no new RTL)
+- Pure NEORV32-software backprop using the **existing M6 forward hardware** for `W·x` only; loss,
+  δ, outer product, update all in C with a chosen Q-format (Q8.8 master, INT8 forward view).
+- Host-side **numpy fixed-point reference** (same Q-format, same rounding/clamp as M6's requant
+  contract) — the golden oracle. Cross-check against tiny-tpu's `jupyter/` notebooks.
+- **Evidence**: XOR loss decreasing over epochs in simulation AND on-board (firmware reads `RES`,
+  computes the rest), final weights match the numpy oracle within ≤1 LSB of the master Q-format.
+
+### M7.1 — array reuse for `Wᵀ·δ` (transpose-load)
+- Add `TRAIN_CTRL[1]` transpose-load to `wb_tpu_accel`/`systolic_array_4x4` (swap row/col select on
+  weight load — Problem 1). Verify `Wᵀ·δ` on the array equals the software transpose-matmul.
+- **Evidence**: sim + on-board, input-grad from the array == software oracle; XOR still converges.
+
+### M7.2 — hardware loss / leaky' / weight-update units (the tiny-tpu trio)
+- `rtl/train_unit.v`: MSE loss + `dL/dy`, leaky-ReLU derivative gate, and `grad_descent`
+  (`W −= dW >>ₐ LR_SHIFT` on the master copy). Written from scratch to the math above; tiny-tpu
+  `src/{loss,leaky_relu,gradient_descent}.sv` are the **reference only** (license caveat below).
+- Wire master-weight BRAM + the outer-product accumulation onto the array.
+- **Evidence**: full train step in hardware (firmware only sequences); loss curve matches M7.0.
+
+### M7.3 — DFX train↔infer split + measured-boot gate (the project-consistent headline + the LUT fix)
+- Package **two** DFX reconfigurable modules on the **same `tpu_rp` interface**:
+  `rtl/dfx/tpu_rp_rm_train.v` (array + training, no inference VPU) and the M6
+  `rm_tpuvpu`/`rm_infer` (array + VPU, no train_unit). This is the **recommended structure** — it
+  both tells the train-then-yield story **and** solves the LUT-pressure ⚠️ (peak = max not sum; see
+  "Reducing M7 resource"). A monolithic mode-selected RM is the fallback only if the swap latency
+  ever matters (it doesn't for XOR).
+- `measured-load` gates **both** RMs (allowlist entries); the RoT authorizes loading the trainer,
+  then authorizes the inference module. After convergence, `loadbp`-swap `rm_train → rm_infer`
+  carrying the **just-learned weights** as initial BRAM contents — measure-then-yield (M6 Model B).
+- **Evidence**: on-board — boot → RoT measured OK → `measured-load` trainer → XOR converges live
+  (`LOSS` register decreasing over UART) → swap to `rm_infer` → inference on the learned weights →
+  PS/NEORV32 heartbeat uninterrupted across both `loadbp`s; tampered partial rejected (M5 negative
+  case, reused).
+
+### M7.4 (stretch) — bigger workload
+- Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as
+  reference), batched over multiple forward/backward passes. 4×4 array → tile/loop in firmware.
+- **Evidence**: on-board accuracy climbing across epochs on a held-out tile; matches numpy oracle.
+
+## Resource sizing (does it still fit the RP pblock?)
+
+The 4×4 INT8 forward array (16 DSP) is unchanged. Training adds, in the RP:
+- **Master-weight + activation BRAM** (Q8.8/INT16): a 2-layer XOR net is tiny (≤ a few hundred
+  16-bit words) → well under 1 RAMB36.
+- `train_unit` (loss/leaky'/update): a handful of adders/multipliers — the requant/update multiplies
+  can be LUT or share the existing DSP column; **no extra DSP pressure** at 4×4.
+
+| Config | DSP48 | LUT6 | BRAM | Fits `pblock_rp` (X1Y0: 20 DSP/≈4.4k LUT/~20 RAMB36)? |
+|---|---|---|---|---|
+| M6 rm_tpuvpu (4×4 + VPU) | ~16–20 | ~2.5–3k | ~1 | yes |
+| M7 **monolithic** (4×4 + VPU + train_unit, all resident) | ~16–20 | ~3.5–4k | ~2 | tight on LUT — watch the impl report ⚠️ |
+| **M7 split via DFX (recommended — see below)** | ~16–20 | **~2.5–3k peak** | ~2 | **yes, comfortable** ✅ |
+| 8×8 trainer (future) | ~64 | >6k | — | no — re-floorplan across clock regions |
+
+### Reducing M7 resource with **our DFX method** (the LUT-pressure fix)
+
+The monolithic row is tight because it pays for **inference logic + training logic at the same
+time**. They are never needed simultaneously, so use the project's core capability — **DFX
+time-multiplexing of the RP** — to make peak resource = `max(train, infer)`, not their sum. This is
+exactly the "measure-then-yield / area-reclaim" pattern (M6 Model B), now applied to train↔infer:
+
+- **`rm_train`** (loaded while learning): 4×4 array + leaky + **leaky′ + loss + grad/update** +
+  master BRAM. **No inference requant VPU** (POST0–3 path absent). 
+- **`rm_infer`** (loaded after convergence): 4×4 array + **VPU requant → POST0–3** (the M6 path),
+  initialized with the just-learned weights. **No train_unit.**
+- Live-swap `rm_train → rm_infer` over PCAP `loadbp` once `LOSS` plateaus — PS/NEORV32 never reset.
+
+Because each config drops the half it doesn't use, **each fits the existing `pblock_rp` with margin
+and no re-floorplan** — the tight ⚠️ row above goes away. This is "我們的方法" used where it actually
+saves area (time-multiplex two large mutually-exclusive datapaths), and it folds naturally into the
+M7.3 train-then-yield story.
+
+**Three more LUT-savers (cheapest first), all consistent with the staged plan:**
+1. **Keep element-wise + weight-update in NEORV32 software** (loss, δ, outer-product, SGD) — the
+   NEORV32 lives in the **static region, costs zero RP LUT**. For XOR (tiny) the speed hit is
+   irrelevant. This shrinks/eliminates `train_unit` in the RP entirely; only the systolic array +
+   minimal glue stay in `rm_train`. (This is already M7.0/M7.1 — keeping it through M7.3 is the
+   resource-minimal option; move pieces to HW only if a workload needs the throughput.)
+2. **Push all training state to BRAM, not FF/LUTRAM** — master weights, activations, δ, momentum.
+   BRAM is abundant here (~20 RAMB36) while LUTs are the bottleneck. Trade the tight resource for
+   the plentiful one.
+3. **Share the DSP column for the update multiply** instead of LUT multipliers — DSP has headroom
+   (16–20 of 20) while LUTs don't; time-share the array's DSPs for `lr·dW` when the array is idle
+   between matmuls.
+
+> **Note — why NOT LUT-bake the weights (LUT-KCM) here:** baking weights into LUT-INIT (the M4/ICAP
+> trick) **trades DSP→LUT**, which makes the *tight* resource (LUT) **worse**, and per-step ICAP
+> rewrites are far too slow for training. LUT-KCM is great for the M6 *inference* identity story
+> (`m6_plan.md` §M6.5) but is the **wrong tool for shrinking M7's LUT footprint** — DFX time-mux +
+> SW-offload + BRAM-state are the right levers.
+
+Keep `RESET_AFTER_RECONFIG true` + `SNAPPING_MODE ON`. **Re-enable `BITSTREAM.GENERAL.CRC`** for M7
+partials unless you still want M4 LUT-editing on this RP (training weights are in BRAM, not LUTs, so
+CRC-disable is no longer needed for M7's own purpose).
+
+## Open decisions / what still needs nailing down (the "還有什麼要補充" list)
+
+These are flagged rather than silently defaulted — each can shift the RTL:
+
+1. **Q-format**: Q8.8 (INT16) master vs INT32 accumulator master. *Recommend Q8.8* — smallest BRAM,
+   enough range for XOR; revisit for MNIST (M7.4) where INT32 accumulation may be needed.
+2. **Network topology for XOR**: 2-2-1 vs 2-4-1. *Recommend 2-4-1* — wider hidden layer trains far
+   more reliably and still fits the 4×4 array (pad to 4).
+3. **Gradient/overflow guards**: fixed-point training overflows silently. Need **saturating** adds on
+   the master update and a sanity clamp on δ; define these in the M7.0 oracle so HW matches.
+4. **Learning rate**: power-of-two `LR_SHIFT` (no divider) — confirm a single shift schedule
+   converges XOR; if not, add a small mantissa-multiply lr.
+5. **Weight init**: random INT8 init must be host-seeded (no on-chip RNG planned) — firmware writes
+   an init vector; or a tiny LFSR in `train_unit` (decide in M7.2).
+6. **Batch vs online SGD**: start **online** (per-sample update) — simplest, converges XOR; batched
+   accumulation is an M7.4 add for MNIST.
+7. **Determinism / oracle tolerance**: decide bit-exact vs ≤1-LSB tolerance for the HW-vs-numpy
+   compare (fixed-point rounding order may differ across the SW/HW split).
+
+## (Optional) ICAP/LUT live-edit hooks — where "our method" *does* help M7
+
+ICAP per-step weight rewrite is too slow and LUT-baking weights worsens the LUT budget (see the
+note in "Reducing M7 resource"), so it is **not** on the M7 critical path. But two ICAP uses fit
+cleanly and strengthen the story without touching the resource budget:
+
+- **M7.3+ checkpoint-to-fabric**: once training converges, instead of (or in addition to) loading
+  the learned weights into `rm_infer`'s BRAM, **ICAP-bake them into the inference LUTs** (M4/T2.2
+  path) — the literal "the chip trains, then writes its learned weights into its own logic." ICAP
+  is used exactly where it's cheap: **once**, at convergence, not per SGD step.
+- **Runtime attestation**: have the static-region RoT use ICAP **register/partial readback** (proven
+  in T2.2/T2.3) to spot-check the loaded accelerator's CRAM after `loadbp` and periodically during
+  training — extends the M5 *pre-load* hash gate with *post-load* fabric verification. (Bounded by
+  the RF-FIFO readback limit → sample frames, not full-frame compare.)
+
+These reuse `scripts/{hwicap-uart.py, lut-surgery.py, prjxray-fasm.sh}` as-is; no new RP resource.
+
+## Milestone definition
+
+**M7 (training):** the EBAZ4205 boots to a measured RoT, `measured-load`s a DFX training module, and
+**trains a 2-layer leaky-MLP to solve XOR entirely on the fabric** — forward + `Wᵀ·δ` backward on the
+systolic array, loss/δ/update via the train unit, master weights in BRAM in QAT hybrid precision —
+with the host only feeding samples and reading a **decreasing `LOSS`** over UART. PS/NEORV32 are never
+reset; a tampered training partial is refused (M5 gate). The final learned weights match a numpy
+fixed-point oracle within tolerance.
+
+## Key files (all inside `/home/test/zynq_xpart/`, zero changes to source projects)
+
+- `rtl/train_unit.v` — MSE loss + `dL/dy`, leaky' gate, `grad_descent` weight update (master copy)
+- `rtl/systolic_array_4x4.v`, `rtl/wb_tpu_accel.v` — extend with transpose-load + TRAIN_CTRL regs
+- `rtl/dfx/tpu_rp_rm_train.v` — training RM on the `tpu_rp` interface (or fold into `rm_tpuvpu`)
+- `vivado/dfx/build_dfx.tcl` — add `config_train`
+- `scripts/train-xor.py` — host loop: seed init/data over UART, read `LOSS` curve, log convergence
+- `sim/tb_train.v` + `sim/oracle_train.py` — numpy fixed-point training oracle (the golden ref)
+- `board/allowlist.sha256` — add the training partial hash
+- **Explicitly not modified**: any file under
+  `/home/test/{xilinx,neorv32_tpu,neorv32_rot,riscv_tpu_demo,rot_tpu_handoff,EP4CE6}`
+
+## Licensing / attribution (tiny-tpu is reference-only — same as M6)
+
+`rtl/train_unit.v` is written from scratch to the math in this doc. Its loss / leaky-derivative /
+gradient-descent algorithms are *referenced from* tiny-tpu-v2/tiny-tpu `src/{loss,leaky_relu,
+gradient_descent}.sv`. **Confirm tiny-tpu's license before copying any code/constants** (the repo
+page showed no LICENSE at plan time — re-derive from public math/docs if unclear). `rtl/` is tracked
+and pushed to the public `github.com/14sea/zynq-xpart`, so add a header:
+`// MSE-loss / leaky-deriv / SGD algorithm referenced from tiny-tpu-v2/tiny-tpu (<license>, <url>).`
+
+## Relationship to existing milestones
+
+| Reused as-is | New in M7 |
+|---|---|
+| M2 4×4 INT8 array (forward `W·x`) | reuse the **same array** for `Wᵀ·δ` (transpose-load) |
+| M6 VPU (bias/leaky/requant) + `VPU_ALPHA` | leaky **derivative** reuses the same `k` |
+| M3 DFX RP + PCAP `loadbp` | `rm_train` (or `rm_tpuvpu`+TRAIN_CTRL) as a new config |
+| M5 `measured-load` gate | gates the training partial; RoT authorizes the trainer |
+| M4 ICAP/LUT live-edit | not on the training loop (weights in BRAM); **optional** for checkpoint-to-fabric + runtime attestation (see ICAP hooks) |
+| — | `train_unit.v`, master-weight BRAM, TRAIN_CTRL/LOSS/DELTA regs, numpy training oracle |
+
+## References
+- Backprop / training datapath reference: tiny-tpu-v2/tiny-tpu `src/{loss,leaky_relu,
+  gradient_descent,vpu}.sv` + `jupyter/` notebooks, <https://github.com/tiny-tpu-v2/tiny-tpu>
+  (**reference-only; verify license** — see Licensing). Note tiny-tpu trains in 16-bit fixed-point;
+  M7 keeps INT8 forward + a Q8.8/INT16 master (QAT hybrid).
+- QAT (quantization-aware training, master-weights pattern): standard practice; any QAT primer.
+- DFX / partial bitstreams: UG909 <https://docs.amd.com/r/en-US/ug909-vivado-partial-reconfiguration>
+- Existing milestone docs: `docs/m6_plan.md` (M6 VPU forward), `docs/dfx_design.md` (M3),
+  `docs/measured_boot.md` (M5), `docs/lut_surgery.md` (M4), `docs/plan.md` (master plan)
