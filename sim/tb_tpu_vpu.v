@@ -55,7 +55,9 @@ module tb_tpu_vpu;
             if (!ae)            act = acc;             // passthrough
             else if (acc >= 0)  act = acc;             // leaky: positive path
             else                act = acc - (acc >>> alp); // leaky: negative path
-            prod = act * sc;                           // signed 48-bit
+            if      (act > 32'sd16777215)  act = 32'sd16777215;   // clamp to signed 25-bit
+            else if (act < -32'sd16777216) act = -32'sd16777216;
+            prod = act * sc;                           // 25 x 16 signed
             if (sft != 6'd0) rnd = prod + (48'sd1 <<< (sft - 6'd1)); // round-half-up
             else             rnd = prod;
             shd = rnd >>> sft;                         // arithmetic shift
@@ -128,6 +130,9 @@ module tb_tpu_vpu;
         // C4b: shift>0 round-half-up exercised
         run_case({32'sd30, 32'sd70, 32'sd125, -32'sd33}, 128'd0, 0, 1,
                  16'sd6, 6'd3, 6'd4, "C4b round shift3");
+        // C5: 25-bit activation clamp (RES beyond +/-2^24 must saturate the mult input)
+        run_case({-32'sd33554432, 32'sd33554432, -32'sd20000000, 32'sd20000000},
+                 128'd0, 0, 0, 16'sd1, 6'd20, 6'd4, "C5 act25 clamp");
 
         // --- M2 MNIST tile (RES0=30, RES1=70 from M2; full lane set + requant) ---
         run_case({-32'sd45, 32'sd120, 32'sd70, 32'sd30},

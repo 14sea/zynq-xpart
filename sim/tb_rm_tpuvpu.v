@@ -82,6 +82,8 @@ module tb_rm_tpuvpu;
             if (!ae)            act = acc;
             else if (acc >= 0)  act = acc;
             else                act = acc - (acc >>> alp);
+            if      (act > 32'sd16777215)  act = 32'sd16777215;   // clamp to signed 25-bit
+            else if (act < -32'sd16777216) act = -32'sd16777216;
             prod = act * sc;
             if (sft != 6'd0) rnd = prod + (48'sd1 <<< (sft - 6'd1));
             else             rnd = prod;

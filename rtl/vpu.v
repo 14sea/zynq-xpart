@@ -17,7 +17,14 @@
 //                     (arithmetic shift; negatives keep sign, reduced magnitude;
 //                      slope = 1 - 2^-alpha, e.g. alpha=4 -> 0.9375)
 //                   else passthrough (y = acc)
-//   4. prod = y(INT32) * scale(INT16)                (signed 48-bit, no truncation)
+//   3b. saturate activation y to SIGNED 25-bit [-2^24, 2^24-1] (clamp, not wrap).
+//       This bounds the requant multiplicand so the multiply maps to a single
+//       DSP48E1 (25x18) -> 4 DSP for the VPU, 20 total with the 16 PE DSPs, i.e.
+//       it fits the RP pblock's 20-DSP budget. Defined design limit: a 4x4 INT8
+//       systolic result (|RES| <= ~64K per output group) plus a reasonable bias
+//       never reaches +/-2^24 (~16.7M), so this is loss-free for the M6 INT8
+//       forward-inference range; the clamp only bites on pathological inputs.
+//   4. prod = y25(SIGNED 25) * scale(INT16)          (one DSP48E1, signed)
 //   5. requant shift:
 //        if shift>0:  prod = prod + (1 << (shift-1)) (round-half-up), prod >>>= shift
 //        if shift==0: prod unchanged
@@ -76,22 +83,29 @@ module vpu (
 
     // ── Per-lane datapath (4 lanes) ──────────────────────────────────────────
     reg         v1, v2;
-    reg  signed [31:0] leaky_r [0:3];   // stage-1 result (after bias + leaky)
+    reg  signed [24:0] leaky_r [0:3];   // stage-1 result (after bias + leaky + 25-bit sat)
     reg  signed [47:0] prod_r  [0:3];   // stage-2 result (after multiply)
+
+    // 25-bit signed activation clamp bounds (keeps the requant mult to 1 DSP48E1)
+    localparam signed [31:0] ACT_MAX =  32'sd16777215;   //  2^24 - 1
+    localparam signed [31:0] ACT_MIN = -32'sd16777216;   // -2^24
 
     genvar i;
     generate
         for (i = 0; i < 4; i = i + 1) begin : LANE
-            // -- stage 1: bias add (wrapping) + leaky ReLU --
+            // -- stage 1: bias add (wrapping) + leaky ReLU + 25-bit saturate --
             wire signed [31:0] res_i  = res_l [32*i +: 32];
             wire signed [31:0] bias_i = bias_l[32*i +: 32];
             wire signed [31:0] biased = bias_en_l ? (res_i + bias_i) : res_i;
             wire signed [31:0] leaky  = (!act_en_l)     ? biased :
                                         (biased >= 0)   ? biased :
                                         (biased - (biased >>> alpha_l));
+            wire signed [24:0] act25  = (leaky > ACT_MAX) ? 25'sh0FFFFFF :
+                                        (leaky < ACT_MIN) ? 25'sh1000000 :
+                                        leaky[24:0];
 
-            // -- stage 2: signed 48-bit multiply --
-            wire signed [47:0] prod = leaky_r[i] * $signed(scale_l);
+            // -- stage 2: single-DSP signed multiply (25 x 16) --
+            (* use_dsp = "yes" *) wire signed [47:0] prod = leaky_r[i] * $signed(scale_l);
 
             // -- stage 3: round-half-up, arithmetic shift, saturate INT8 --
             wire signed [47:0] rnd = (shift_l != 6'd0)
@@ -104,11 +118,11 @@ module vpu (
 
             always @(posedge clk or negedge rst_n) begin
                 if (!rst_n) begin
-                    leaky_r[i] <= 32'sd0;
+                    leaky_r[i] <= 25'sd0;
                     prod_r[i]  <= 48'sd0;
                     post_out[8*i +: 8] <= 8'd0;
                 end else begin
-                    leaky_r[i] <= leaky;        // s1
+                    leaky_r[i] <= act25;        // s1 (bias+leaky, clamped to 25-bit)
                     prod_r[i]  <= prod;         // s2
                     post_out[8*i +: 8] <= sat;  // s3
                 end

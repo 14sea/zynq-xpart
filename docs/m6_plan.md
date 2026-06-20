@@ -84,8 +84,15 @@ The M6.0 golden oracle and the RTL must agree on every one of these, or POST0–
 
 - **Datapath order**: per lane, `acc = RES_n` (INT32) → `+ VPU_BIAS_n` (INT32, wrapping add,
   no saturation at this stage) → **Leaky ReLU** (`y = x` if `x≥0` else `x − (x >>ₐ VPU_ALPHA)`,
-  arithmetic shift, so negatives stay negative with reduced magnitude) → **requantize**.
-- **Requantize**: `prod = act(INT32) * VPU_SCALE(INT16)` computed in a **48-bit signed**
+  arithmetic shift, so negatives stay negative with reduced magnitude) → **clamp activation to
+  signed 25-bit** (see next bullet) → **requantize**.
+- **Activation clamp (as-built, M6.0)**: before the multiply, saturate `y` to **signed 25-bit
+  [−2²⁴, 2²⁴−1]** (clamp, not wrap). This bounds the multiplicand so each lane's requant
+  multiply maps to a **single DSP48E1** (25×18) → 4 VPU DSP + 16 PE DSP = **20 DSP**, exactly the
+  RP pblock budget (the alternative all-LUT multiply measured 4603 LUT > the 4400-LUT pblock).
+  Loss-free for the M6 INT8 forward range: a 4×4 INT8 result (|RES| ≲ 64K/group) plus a sane
+  bias never approaches ±2²⁴ (~16.7M); the clamp only bites on pathological inputs (tb corner C5).
+- **Requantize**: `prod = act(SIGNED 25) * VPU_SCALE(INT16)` accumulated into a **48-bit signed**
   intermediate (no truncation before the shift). Then **arithmetic right shift** by
   `VPU_SHIFT` (sign-preserving). Rounding = **round-half-up**: add `(1 << (VPU_SHIFT-1))`
   before the shift when `VPU_SHIFT>0` (and `0` when `VPU_SHIFT==0`).
@@ -109,8 +116,13 @@ bare 4×4 TPU uses 16 DSP / 1 BRAM / ~700 LUT.
 | RM | DSP48 | LUT6 | Fits current pblock? |
 |---|---|---|---|
 | RM1 4×4 TPU (today) | 16 | ~700 | yes, room to spare |
-| **rm_tpuvpu: 4×4 + 4-lane VPU** | ~16–20 (requant mults can be LUT) | ~2.5–3k | **yes, no floorplan change** ✅ |
+| **rm_tpuvpu: 4×4 + 4-lane VPU (as-built, OOC synth 2026-06-20)** | **20** (16 PE + 4 VPU @ 1 DSP/lane via 25-bit act clamp) | **2799** | **yes, no floorplan change** ✅ (DSP 20/20, LUT 64%) |
 | 8×8 + VPU (future) | ~64 | ~6k+ | **no** — exceeds 20 DSP in X1Y0; re-floorplan RP across 2 clock regions (XC7Z010 has 80 DSP total) |
+
+> **Sizing note (measured).** Two extremes both miss the pblock: requant fully on DSP = 24 DSP
+> (>20), fully on LUT = 4603 LUT (>4400). The shipped middle path clamps the activation to signed
+> 25-bit so each VPU multiply is a single DSP48E1 → exactly 20 DSP and 2799 LUT. No `pblock_rp`
+> change needed.
 
 **M6 targets 4×4 + VPU** → the current `pblock_rp` is reused as-is. Widening to 8×8 is an
 explicit non-goal for M6 (it forces a multi-region RP re-floorplan and eats most of the 80
@@ -140,10 +152,13 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 > (wraps `wb_tpu_accel` + `vpu`, keeps `tpu_rp` interface; VPU regs 0x30-0x50 claimed at the
 > wrapper, RES0-3/matmul-done tapped out of `tpu_accel`/`wb_tpu_accel` via new backward-compatible
 > output ports — RM1 still elaborates). Two testbenches, both green under iverilog/vvp:
-> - `sim/tb_tpu_vpu.v` — VPU core vs independent golden oracle: **306/306** (4 corners
->   [leaky-neg, sat-high, sat-low, shift0] + M2 MNIST tile + 300 random). Bit-exact.
+> - `sim/tb_tpu_vpu.v` — VPU core vs independent golden oracle: **307/307** (5 corners
+>   [leaky-neg, sat-high, sat-low, shift0, 25-bit act clamp] + M2 MNIST tile + 300 random). Bit-exact.
 > - `sim/tb_rm_tpuvpu.v` — full RM over XBUS: real systolic matmul (RES=14,40,28,6) → VPU →
 >   POST0-3 == oracle, plus the VPU-bypass (`VPU_CTRL[0]=0`) legacy-done path. **2/2 pass.**
+> OOC synth-lint (Vivado 2025.2, xc7z010clg400-1): clean — synth OK, **0 inferred latches**,
+> 0 CRITICAL, fits the RP pblock at **20 DSP / 2799 LUT** (see "Sizing note" above for the
+> 25-bit-activation-clamp decision that brought DSP from 24 → 20).
 > Gotcha logged: the TB Wishbone master must sample the 1-cycle `xbus_ack` on negedge and let
 > `pending` register a cycle after asserting, else it latches the *previous* transaction's ack
 > and drops the strobe before the slave's write cycle (writes silently never land). RTL was fine.
