@@ -197,13 +197,28 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 - Confirm the RP still routes inside `pblock_rp` with no DRC; check DSP/LUT utilization report.
 - **Evidence**: Vivado impl report (RP util within pblock), generated full + partial bitstreams.
 
-### M6.2 — measured boot sequencer
+### M6.2 — measured boot sequencer  ✅ DONE (2026-06-20)
+> `scripts/boot-sequence.sh` (with `--dry-run` host-side gate check): measured-load static
+> (loadb) → poll mailbox RoT heartbeat → measured-load rm_tpuvpu (loadbp) → read POST. Both
+> bitstream sha256 added to `board/allowlist.sha256`. `sw/tpu_vpu_firmware/` written + compiled.
+
 - Add `scripts/boot-sequence.sh`: `measured-load static.bit` → (poll NEORV32 RoT "measured OK"
   over UART/AXI) → `measured-load --op loadbp rm_tpuvpu.bit`. Add both hashes to
   `board/allowlist.sha256`.
 - **Evidence**: on-board log showing static-load OK → RoT measure OK → partial-load OK.
 
-### M6.3 — end-to-end on the EBAZ4205 (headline)
+### M6.3 — end-to-end on the EBAZ4205 (headline)  ✅ DONE & HW-VERIFIED (2026-06-20)
+> **On-board (EBAZ4205, miner U-Boot, fpga loadb/loadbp):**
+> - measured-gate passes the allowlisted static + partial (sha256 match).
+> - `loadb` static full → `md 0x41200000` = **`0x1019391F`** = POST {31,57,25,16}, the bit-exact
+>   VPU inference matching `sim/tb_rm_tpuvpu.v` T1.
+> - `loadbp` rm_tpuvpu = **live RP swap, no PS/NEORV32 reset** → mailbox stays `0x1019391F`.
+> - **Negative case**: 1-byte-flipped partial → `measured-load` **REJECTED (exit 2)**, not loaded,
+>   fabric unchanged (M5 gate reused).
+> - **Firmware gotcha fixed**: `RESET_AFTER_RECONFIG` wipes the RP PE weights on `loadbp`, so the
+>   NEORV32 loop must reload weights every pass; the first build loaded them once in `main()` and
+>   the post-swap matmul ran on zeroed weights (mailbox `0x07f3000b`) — per-pass reload fixes it.
+
 - Boot the board; confirm it comes up in RoT state (mailbox/LED pattern distinct from TPU);
   run the sequencer; observe the live swap; run a firmware MNIST tile through the VPU path and
   read POST0–3.
