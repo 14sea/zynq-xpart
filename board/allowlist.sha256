@@ -4,6 +4,7 @@ ca09f3fe7e95f0ec8c1e4e068ca59cc985968d0788ebdcc9a5958b26086ee937  full-static+RM
 c48a1eb289883f96a935f7877aa4b4012b8201bff4b61a2dc4584cc0330fd089  partial-RM1-real-TPU
 b5139ca893dd85b048790a0ac63f03067e4db994b6bce83aec7cb6b29d43c4c2  partial-RM2-alt-accel
 70b08678995c42dd12f16a69accaf960b07c2102eec2ad62881e7f2fef919181  partial-RM_LUT-A-weights0x5A
-# M6.1 (2026-06-20): full-version 4x4 TPU + 4-lane VPU
-54f44f1d5ec40402e3505038d7f900b4c1b1065322bc75be0ef5a0c64cf55c54  full-static+RM_TPUVPU
-5e91d7e73d4083b7dc0112054037a5a13ec8e171bd95e9decab2e69d1b8ad877  partial-RM_TPUVPU-tpu+vpu
+# M6.3 (2026-06-20): full-version 4x4 TPU + 4-lane VPU, with tpu_vpu_firmware baked
+# into the NEORV32 IMEM (supersedes the M6.1 hashes built with the old firmware).
+da1d98260e90d7577e56c62884b8486a6f34591f042cf4e01a038f946d31701f  full-static+RM_TPUVPU
+e9c8516cc344da60d0324274d04cfe0612262d9f8df897da34f5faeeaf7edcbf  partial-RM_TPUVPU-tpu+vpu
