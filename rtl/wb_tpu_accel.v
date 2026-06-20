@@ -24,7 +24,15 @@ module wb_tpu_accel (
     output        xbus_err,
 
     // Debug outputs
-    output [3:0]  dbg_leds
+    output [3:0]  dbg_leds,
+
+    // M6: RES + matmul-done taps for a downstream VPU (rm_tpuvpu). Optional —
+    // by-name instantiators that don't need them leave them unconnected.
+    output [31:0] res0_o,
+    output [31:0] res1_o,
+    output [31:0] res2_o,
+    output [31:0] res3_o,
+    output        mm_done_o
 );
 
     // ── tpu_accel internal wires ────────────────────────────────────────────
@@ -72,7 +80,12 @@ module wb_tpu_accel (
         .wstrb     (xbus_we ? xbus_sel : 4'b0000),
         .rdata     (tpu_rdata),
         .ready     (tpu_ready),
-        .debug_led (tpu_debug)
+        .debug_led (tpu_debug),
+        .res0_o    (res0_o),
+        .res1_o    (res1_o),
+        .res2_o    (res2_o),
+        .res3_o    (res3_o),
+        .mm_done_o (mm_done_o)
     );
 
 endmodule

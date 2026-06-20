@@ -52,7 +52,16 @@ module tpu_accel (
     output reg         ready,
     // Systolic array result (directly from SA)
     // (SA is instantiated inside this module)
-    output wire [3:0]  debug_led   // optional debug
+    output wire [3:0]  debug_led,  // optional debug
+    // M6: expose the row accumulators + matmul-done so a downstream VPU stage
+    // (rm_tpuvpu) can consume RES0-3 without going back over the bus.  All four
+    // are plain outputs; existing instantiators that bind by name simply leave
+    // them unconnected (backward compatible).
+    output wire [31:0] res0_o,
+    output wire [31:0] res1_o,
+    output wire [31:0] res2_o,
+    output wire [31:0] res3_o,
+    output wire        mm_done_o   // matmul STATUS.done level
 );
 
     // ---- Address-window decode (v2) ----
@@ -344,5 +353,12 @@ module tpu_accel (
     always @(*) ready = ready_r;
 
     assign debug_led = {done, computing, 2'b00};
+
+    // M6: RES + matmul-done taps for the VPU stage.
+    assign res0_o    = acc[0];
+    assign res1_o    = acc[1];
+    assign res2_o    = acc[2];
+    assign res3_o    = acc[3];
+    assign mm_done_o = done;
 
 endmodule

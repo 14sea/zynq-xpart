@@ -135,7 +135,19 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 
 ## Phased plan (sub-milestones)
 
-### M6.0 — VPU RTL + full-version RM, simulated
+### M6.0 — VPU RTL + full-version RM, simulated  ✅ DONE (2026-06-20)
+> **As-built:** `rtl/vpu.v` (4-lane, fixed 4-cycle pipeline) + `rtl/dfx/tpu_rp_rm_tpuvpu.v`
+> (wraps `wb_tpu_accel` + `vpu`, keeps `tpu_rp` interface; VPU regs 0x30-0x50 claimed at the
+> wrapper, RES0-3/matmul-done tapped out of `tpu_accel`/`wb_tpu_accel` via new backward-compatible
+> output ports — RM1 still elaborates). Two testbenches, both green under iverilog/vvp:
+> - `sim/tb_tpu_vpu.v` — VPU core vs independent golden oracle: **306/306** (4 corners
+>   [leaky-neg, sat-high, sat-low, shift0] + M2 MNIST tile + 300 random). Bit-exact.
+> - `sim/tb_rm_tpuvpu.v` — full RM over XBUS: real systolic matmul (RES=14,40,28,6) → VPU →
+>   POST0-3 == oracle, plus the VPU-bypass (`VPU_CTRL[0]=0`) legacy-done path. **2/2 pass.**
+> Gotcha logged: the TB Wishbone master must sample the 1-cycle `xbus_ack` on negedge and let
+> `pending` register a cycle after asserting, else it latches the *previous* transaction's ack
+> and drops the strobe before the slave's write cycle (writes silently never land). RTL was fine.
+
 - Write `rtl/vpu.v` (4-lane bias/Leaky-ReLU/requant, fully pipelined) and
   `rtl/dfx/tpu_rp_rm_tpuvpu.v` wrapping `wb_tpu_accel` + `vpu`, keeping the `tpu_rp` interface.
   `vpu.v` is **written from scratch** to the "VPU arithmetic semantics" contract above; tiny-tpu
