@@ -20,6 +20,11 @@ vivado/**/*.gen/
 # prjxray scratch
 *.fasm.tmp
 
+# DFX build scratch / preserved outputs (bitstreams already covered by *.bit)
+vivado/**/m6_out/
+vivado/**/hd_visual/
+vivado/**/build_m6.out
+
 # Python
 __pycache__/
 *.pyc

@@ -175,7 +175,22 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 - **Evidence**: sim log, POST0–3 == software oracle for ≥1 MNIST tile, across all four
   activation/bias/requant corners (x<0 leaky path, saturate-high, saturate-low, shift=0).
 
-### M6.1 — DFX build with the new config
+### M6.1 — DFX build with the new config  ✅ DONE (2026-06-20)
+> **As-built.** `build_dfx.tcl` extended: `create_reconfig_module rm_tpuvpu` (fileset =
+> `tpu_rp_rm_tpuvpu.v` + `vpu.v` + the shared `wb_tpu_accel/tpu_accel/systolic/pe` — the shared
+> submodules must be added to *this* RM's fileset too, since rm1's `-define_from` pulls them into
+> rm1's fileset) + `create_pr_configuration cfg5` + `impl_5` (child of impl_1, the locked static).
+> A `build_all` flag (default 0) builds only impl_1 (static+rm1) + impl_5 (TPU+VPU), since
+> rm2/rm_lut are unchanged & already hw-verified. Build ran ~6 min, both runs `write_bitstream
+> Complete!`.
+> - Outputs (preserved in `vivado/dfx/m6_out/`, gitignored): `rm_tpuvpu_partial.bit` (644,560 B,
+>   sha256 `5e91d7e7…`) + `static_full_tpuvpu.bit` (2,083,859 B, sha256 `54f44f1d…`).
+> - **DRC clean** (`impl5_drc.rpt`): 0 errors, 0 critical, no RPLOC/HDPR partition-boundary
+>   violations — only expected Warnings (DPIP/DPOP DSP-pipelining, REQP-183x BRAM async-ctrl).
+> - **RP fits pblock**: place+route+bitstream all succeeded with `pblock_rp` active → 4×4+VPU
+>   placed in the 20-DSP region (full-design DSP48E1 = 20, all in the RP; static NEORV32 uses 0).
+> Next: add the two sha256 to `board/allowlist.sha256` for M6.2.
+
 - Extend `vivado/dfx/build_dfx.tcl`: `create_reconfig_module rm_tpuvpu` + `create_pr_configuration
   config_tpuvpu`; (stub) `rm_rot` config left commented for Model B.
 - impl config_tpuvpu (locked static) → produce `partial/rm_tpuvpu.bit` and refreshed static full.

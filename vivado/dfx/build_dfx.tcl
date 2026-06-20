@@ -72,31 +72,61 @@ create_reconfig_module -name rm_lut -partition_def [get_partition_defs tpu_pd] -
 add_files -norecurse -of_objects [get_reconfig_modules rm_lut] $root/rtl/dfx/tpu_rp_rm_lut.v
 create_reconfig_module -name rm_lut_b -partition_def [get_partition_defs tpu_pd] -top tpu_rp
 add_files -norecurse -of_objects [get_reconfig_modules rm_lut_b] $root/rtl/dfx/tpu_rp_rm_lut_b.v
+# M6: full-version RM = 4x4 TPU + 4-lane VPU. Its fileset needs the wrapper +
+# vpu.v AND the shared lower modules (wb_tpu_accel/tpu_accel/systolic/pe) —
+# those get pulled into rm1_tpu's fileset by rm1's -define_from, so add them
+# explicitly here too (a submodule source may live in multiple RM filesets).
+create_reconfig_module -name rm_tpuvpu -partition_def [get_partition_defs tpu_pd] -top tpu_rp
+add_files -norecurse -of_objects [get_reconfig_modules rm_tpuvpu] \
+    [list $root/rtl/dfx/tpu_rp_rm_tpuvpu.v $root/rtl/vpu.v \
+          $root/rtl/wb_tpu_accel.v $root/rtl/tpu_accel.v \
+          $root/rtl/systolic_array_4x4.v $root/rtl/pe.v]
 create_pr_configuration -name cfg1 -partitions [list $rp_cell:rm1_tpu]
 create_pr_configuration -name cfg2 -partitions [list $rp_cell:rm2_alt]
 create_pr_configuration -name cfg3 -partitions [list $rp_cell:rm_lut]
 create_pr_configuration -name cfg4 -partitions [list $rp_cell:rm_lut_b]
+create_pr_configuration -name cfg5 -partitions [list $rp_cell:rm_tpuvpu]
 add_files -fileset constrs_1 -norecurse $origin/pblock_rp.xdc
 
 set_property PR_CONFIGURATION cfg1 [get_runs impl_1]
 create_run impl_2 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg2
 create_run impl_3 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg3
 create_run impl_4 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg4
+create_run impl_5 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg5
+
+# M6.1: by default build only the static (impl_1, the locked parent) + the new
+# TPU+VPU partial (impl_5). rm2/rm_lut/rm_lut_b are unchanged & already
+# hardware-verified; set build_all 1 to rebuild them too.
+set build_all 0
 
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 wait_on_run impl_1
-puts "=== impl_1 (cfg1): [get_property STATUS [get_runs impl_1]] ==="
-launch_runs impl_2 -to_step write_bitstream -jobs 8
-wait_on_run impl_2
-puts "=== impl_2 (cfg2): [get_property STATUS [get_runs impl_2]] ==="
-launch_runs impl_3 -to_step write_bitstream -jobs 8
-wait_on_run impl_3
-puts "=== impl_3 (cfg3 lut A): [get_property STATUS [get_runs impl_3]] ==="
-launch_runs impl_4 -to_step write_bitstream -jobs 8
-wait_on_run impl_4
-puts "=== impl_4 (cfg4 lut B): [get_property STATUS [get_runs impl_4]] ==="
+puts "=== impl_1 (cfg1 static+rm1): [get_property STATUS [get_runs impl_1]] ==="
+
+if {$build_all} {
+  launch_runs impl_2 -to_step write_bitstream -jobs 8
+  wait_on_run impl_2
+  puts "=== impl_2 (cfg2): [get_property STATUS [get_runs impl_2]] ==="
+  launch_runs impl_3 -to_step write_bitstream -jobs 8
+  wait_on_run impl_3
+  puts "=== impl_3 (cfg3 lut A): [get_property STATUS [get_runs impl_3]] ==="
+  launch_runs impl_4 -to_step write_bitstream -jobs 8
+  wait_on_run impl_4
+  puts "=== impl_4 (cfg4 lut B): [get_property STATUS [get_runs impl_4]] ==="
+}
+
+launch_runs impl_5 -to_step write_bitstream -jobs 8
+wait_on_run impl_5
+puts "=== impl_5 (cfg5 tpu+vpu): [get_property STATUS [get_runs impl_5]] ==="
+
+# M6.1 evidence: RP utilization (within pblock?) + DRC on the routed TPU+VPU.
+open_run impl_5
+report_utilization -file $bdir/impl5_util.rpt
+report_drc        -file $bdir/impl5_drc.rpt
+puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
+
 puts "=== bitstreams ==="
-foreach b [glob -nocomplain $bdir/$proj.runs/impl_1/*.bit $bdir/$proj.runs/impl_2/*.bit $bdir/$proj.runs/impl_3/*.bit $bdir/$proj.runs/impl_4/*.bit] { puts "  $b" }
+foreach b [glob -nocomplain $bdir/$proj.runs/impl_*/*.bit] { puts "  $b" }
 exit
