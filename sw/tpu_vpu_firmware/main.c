@@ -59,6 +59,16 @@ static void load_weight_row(int row, int8_t w0, int8_t w1, int8_t w2, int8_t w3)
                   ((uint32_t)(uint8_t)w1 <<  8) |  (uint32_t)(uint8_t)w0;
 }
 
+// Reference weight matrix W. Re-loaded every pass: a live DFX loadbp does a
+// RESET_AFTER_RECONFIG of the RP, which wipes the PE weight registers, so the
+// loop MUST reload them or the post-swap matmul runs on zeroed weights.
+static void load_weights(void) {
+    load_weight_row(0, 1, 1, 1, 1);
+    load_weight_row(1, 1, 2, 3, 4);
+    load_weight_row(2, 2, 2, 2, 2);
+    load_weight_row(3, 1, 0, 1, 0);
+}
+
 static void set_bias(int lane, int32_t bias) {
     TPU_W_ADDR = (uint32_t)lane;          // wrapper snoops W_ADDR[1:0] = bias lane
     VPU_BIAS   = (uint32_t)bias;
@@ -96,13 +106,8 @@ int main(void) {
     neorv32_uart0_printf("  RoT element alive, measured OK       \n");
     neorv32_uart0_printf("=====================================\n");
 
-    // Static weights (W) for the reference tile.
-    load_weight_row(0, 1, 1, 1, 1);
-    load_weight_row(1, 1, 2, 3, 4);
-    load_weight_row(2, 2, 2, 2, 2);
-    load_weight_row(3, 1, 0, 1, 0);
-
     // One pass for the UART self-check + report RES and POST.
+    load_weights();
     uint32_t packed = run_vpu(2, 3, 4, 5,  8, 0, -10, 5,  181, 7, 4);
     neorv32_uart0_printf("RES = %d %d %d %d\n",
         (int32_t)TPU_RES(0), (int32_t)TPU_RES(1), (int32_t)TPU_RES(2), (int32_t)TPU_RES(3));
@@ -114,7 +119,7 @@ int main(void) {
     // with no CPU reset (mailbox flips e.g. rm2 0x00BB00CC -> 0x1019391F).
     uint32_t led = 0xF;
     while (1) {
-        // weights are stationary; just re-run the VPU pass and re-publish.
+        load_weights();   // reload every pass — survives a live DFX RP reset
         MBOX = run_vpu(2, 3, 4, 5,  8, 0, -10, 5,  181, 7, 4);
         neorv32_gpio_port_set(led);
         led ^= 0xF;
