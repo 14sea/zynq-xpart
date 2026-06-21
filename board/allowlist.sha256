@@ -29,10 +29,12 @@ b033284535b0c14fdf900926151fdebbe869b8a39d9a61e43db55ebca3ef8065  partial-RM_LUT
 # outer-product/SGD in NEORV32 SW. Same DFX static structure as M6.3 (rm_tpuvpu,
 # VPU bypassed); only the IMEM image differs. Loss curve via PS mailbox 0x41200000
 # (scripts/m7-watch-loss.py). Built from vivado/dfx build impl_5.
-# Firmware has a ~45s post-config SETTLE delay before training (M7_SETTLE_ITERS):
+# Firmware has a ~10s post-config SETTLE delay before training (M7_SETTLE_ITERS):
 # without it training diverges from ep0 on real silicon (deterministic garbage) even
 # though isolated maccs read correct — the cure is wall-clock time, not warm-up count.
-# This hash is the SETTLE build (hw-verified: loss curve bit-exact to oracle, XOR 4/4).
+# A single-boot settle-time sweep measured the minimum at ~1-2s (≤5s confirmed); 10s is
+# a safe margin (was 45s). This hash is the ~10s SETTLE build (hw-verified: full loss
+# curve bit-exact to oracle, XOR 4/4, SSE=0).
 # (Supersedes the M7.0b builds 2658438e / 76f2a46a, which did Wᵀ·δ in SW Q8.8.)
-14180df313516c80cde8ab1bf64055270e0ff5628e8dd39082144aa368298b9d  full-static+RM_TPUVPU-M7TRAIN
-1c8130059103919f5cdb58dbb1e572aa0fbcaf83fb9245dfe89b552dff1809bc  partial-RM_TPUVPU-M7TRAIN
+ec6716c8006a97e8775ced297e77e2a563df5316fc4c021235ff6d3e80d7ce12  full-static+RM_TPUVPU-M7TRAIN
+eb776cc21953f4d1c43a7f517264a1927489dd27c9da56238231220a62ac8853  partial-RM_TPUVPU-M7TRAIN

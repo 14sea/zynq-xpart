@@ -43,7 +43,7 @@
 // (dfx_top.v leaves uart0_txd_o open), so the mailbox is the only PS-visible
 // channel — hence the loss curve goes through it, not printf.
 #define M7_HOLD_ITERS  60000000u    // ~3-5 s/checkpoint depending on FCLK0
-#define M7_SETTLE_ITERS 90000000u   // ~45 s post-config settle before training
+#define M7_SETTLE_ITERS 30000000u   // ~10 s post-config settle (measured min ≤~5 s, see below)
 
 #define M7_BOARD            // exclude the golden self-check arrays from the build
 
@@ -121,22 +121,26 @@ int main(void) {
     m7_init(W1, b1, W2, b2);
 
     // M7.1 post-config SETTLE (required for correct training). Finding from the
-    // on-board settle diagnostic: isolated array_macc reads back correct even early
-    // after `fpga loadb`, yet training that starts immediately diverges from ep0
-    // with deterministic garbage — the first SGD step lands on a bad matmul, corrupts
-    // the Q8.8 master weights, and never recovers. The cure is WALL-CLOCK TIME, not
-    // warm-up count: 256 back-to-back maccs (<10 ms) still diverged (XOR 2/4), while
-    // the same/fewer maccs spread over ~130 s converged bit-exact to the oracle.
-    // Converge-with-delay vs diverge-without was 2/2 vs 5/5 across rebuilds — not a
-    // P&R lottery. So wait ~45 s (and run a few warm-up maccs, mirroring the configs
-    // that worked) before the first training step. Underlying post-config mechanism
-    // (FCLK0/PLL settling, config-time rail droop, or DFX decoupling) is still open.
+    // on-board diagnostics: isolated array_macc reads back correct even early after
+    // `fpga loadb`, yet training that starts immediately diverges from ep0 with
+    // deterministic garbage — the first SGD step lands on a bad matmul, corrupts the
+    // Q8.8 master weights, and never recovers. The cure is WALL-CLOCK TIME, not warm-up
+    // count: 256 back-to-back maccs (<10 ms) still diverged (XOR 2/4), while the same/
+    // fewer maccs spread over time converged bit-exact. The "is there a real pre-train
+    // delay?" predictor matched every build — 5 without a delay diverged, 3 with one
+    // converged (8/8) — not a P&R lottery. A single-boot settle-time sweep (64 fresh
+    // probe trainings at increasing T-since-config) then measured the threshold to be
+    // SMALL: every probe from the earliest catchable (~5 s after config) converged, and
+    // the only diverging builds had ~0 s pre-train delay ⇒ the true minimum is ~1–2 s.
+    // So ~10 s here is a comfortable margin (was 45 s before the sweep). Run a few warm-
+    // up maccs too, mirroring the configs that worked. Underlying mechanism (FCLK0/PLL
+    // settling, config-time rail droop, or DFX decoupling) is still open.
     {
         const signed char Ww[4][4] = {{1,1,1,1},{1,2,3,4},{2,2,2,2},{1,0,1,0}};
         const signed char Xw[4]    = {2,3,4,5};
         int32_t accw[4];
         for (int w = 0; w < 16; w++) array_macc(Ww, Xw, accw);
-        for (volatile uint32_t d = 0; d < M7_SETTLE_ITERS; d++) { }   // ~45 s settle
+        for (volatile uint32_t d = 0; d < M7_SETTLE_ITERS; d++) { }   // ~10 s settle
     }
 
     neorv32_uart0_printf("training %d epochs (loss -> mailbox)...\n", M7_EPOCHS);

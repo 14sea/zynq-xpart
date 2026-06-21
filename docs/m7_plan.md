@@ -167,19 +167,28 @@ starts compute immediately after `fpga loadb`.
   256 maccs in 10 ms fails while ~60 maccs over ~130 s succeeds ⇒ elapsed time is the active ingredient.
   The predictor "is there a real pre-training delay?" matched **every** on-board build: the 5 with no
   delay (3 original + the clean no-probe + the 256-macc pure-count) all diverged; the 3 with a delay (the
-  early probe build, the ~130 s diagnostic, and the shipped ~45 s settle) all converged — **8/8**.
+  early probe build, the ~130 s diagnostic, and the shipped settle build) all converged — **8/8**.
   (Per-call `hw_flush`, a dummy zero-macc before every real one, does **not** help: it adds maccs, not
   time.) Mechanistically the first SGD step lands on a bad matmul, corrupts the Q8.8 master weights, and
   the run never recovers even once the array is "good" — which is why the settle must happen **before the
   first weight update**, not merely before the first matmul.
-- **The fix (shipped).** `sw/m7_train/main.c` runs 16 warm-up maccs **plus an `M7_SETTLE_ITERS` (~45 s)
-  busy-wait before the training loop**. `hw_flush` is retained as harmless belt-and-suspenders.
-- **Open root cause.** Why isolated maccs are correct within seconds but *training* needs ~tens of seconds
-  of settle is still not understood. Candidates: FCLK0/PLL jitter settling, a config-time power-rail
-  droop that takes seconds to recover, or DFX decoupling release. Pinning it needs instrumentation we
-  haven't applied yet (a scope on FCLK0, or XADC on-die temperature/voltage). The ~45 s startup is also
-  ugly for a live demo — a future pass could binary-search the minimum settle (each probe = one
-  rebuild+load+verify cycle).
+- **How small is the minimum? Measured ~1–2 s (a single-boot settle-time sweep).** A throwaway sweep
+  firmware ran 64 trials in one boot, each = fresh `m7_init` + a START marker + a short 40-epoch probe
+  train, publishing the probe's epoch-39 SSE; the host timestamps each trial's start (T since config) and
+  compares the SSE to the oracle's `losses[39] = 285` (match ⇒ that trial was settled). Across two boots
+  **every catchable trial converged** — the earliest caught (~5 s after config) and all later ones, zero
+  divergence. Turn latency stopped me catching the very first trials (T≈0–4 s), so the exact floor isn't
+  nailed, but since the *only* diverging builds had ~0 s pre-train delay and every sweep trial (incl. the
+  first, with just a ~1 s pre-train hold) converged, the true minimum is **~1–2 s**. So the original
+  45 s was ~20–40× conservative.
+- **The fix (shipped).** `sw/m7_train/main.c` runs 16 warm-up maccs **plus an `M7_SETTLE_ITERS` (~10 s)
+  busy-wait before the training loop** — a comfortable margin over the ~1–2 s measured minimum (reduced
+  from 45 s after the sweep; re-verified that FULL 4000-epoch training stays bit-exact at 10 s). `hw_flush`
+  is retained as harmless belt-and-suspenders.
+- **Open root cause.** Why isolated maccs are correct within seconds but *training* needs a (small) settle
+  before the first SGD step is still not understood. Candidates: FCLK0/PLL jitter settling, a config-time
+  power-rail droop, or DFX decoupling release — all plausible for a ~1–2 s window. Pinning the mechanism
+  (vs just the timing, now measured) would need a scope on FCLK0 or XADC on-die temperature/voltage.
 - **Tooling gotcha worth keeping.** A background watcher whose own command line contains the string it
   greps for (`until ! pgrep -f uboot-fpga-load`) **matches itself**, so the wait-loop never exits and the
   watcher hangs producing no output. Match a more specific pattern or use a PID file.
