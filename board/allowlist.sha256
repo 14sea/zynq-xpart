@@ -27,7 +27,10 @@ b033284535b0c14fdf900926151fdebbe869b8a39d9a61e43db55ebca3ef8065  partial-RM_LUT
 # M7.0b (2026-06-21): on-chip XOR TRAINING firmware baked into the NEORV32 IMEM.
 # Same DFX static structure as M6.3 (rm_tpuvpu RM, VPU bypassed — training reads
 # the raw INT32 RES0-3 and does backprop/SGD in SW); only the IMEM image differs,
-# so the full-static hash is new. Boot this full static, watch the LOSS curve fall
-# over UART (host does no math). Built from vivado/dfx build impl_5.
-2658438e936b2fae869979f1710eadffebf0351c3f6a900198252ed6eff21fdb  full-static+RM_TPUVPU-M7TRAIN
-dd98a22133210c752c4956bcdc67b3a848699514b59ea1711ad4c665c59a9a3e  partial-RM_TPUVPU-M7TRAIN
+# so the full-static hash is new. The trainer publishes its loss curve through the
+# PS mailbox 0x41200000 (NEORV32 uart0 not pinned out); host polls it with
+# scripts/m7-watch-loss.py. Built from vivado/dfx build impl_5.
+# (Superseded the first M7TRAIN build 2658438e/dd98a221, which had no progressive
+# mailbox loss output.)
+7770efcbaa5fa453c8ae7aa63b451a49682a480ed6cf5eb9419f2b7184330c80  full-static+RM_TPUVPU-M7TRAIN
+715d660ae05a9bb15a54b28a00ca360fd21b5fec556c6a7716b23d06c992b79a  partial-RM_TPUVPU-M7TRAIN

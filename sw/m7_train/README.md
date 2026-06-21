@@ -18,8 +18,13 @@ UART.
   only; excluded from the board build via `-DM7_BOARD`).
 - `train_xor.c` — HOST validator: plain-C `array_macc`, runs the kernel, bit-exact
   compares final weights + full loss curve against the numpy oracle.
-- `main.c` — NEORV32 board firmware: XBUS `array_macc` + the same kernel, streams
-  the loss curve and final weights over UART.
+- `main.c` — NEORV32 board firmware: XBUS `array_macc` + the same kernel. NEORV32
+  `uart0` is not pinned out on this board (`dfx_top.v` leaves `uart0_txd_o` open),
+  so the loss curve is published progressively through the PS mailbox 0x41200000
+  (bit31=0 → checkpoint `(idx<<24)|SSE`; bit31=1 → DONE `0x80000000|(XOR<<16)|SSE`),
+  each checkpoint held ~2 s for host sampling.
+- `../../scripts/m7-watch-loss.py` — host watcher: polls the mailbox over U-Boot
+  `md` and decodes the live loss curve. Run right after `fpga loadb`.
 
 ## Host validation (do this first — no board, no Vivado)
 ```bash

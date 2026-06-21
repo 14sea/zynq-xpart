@@ -31,6 +31,16 @@
 #define VPU_CTRL    (*(volatile uint32_t *)(TPU_BASE + 0x30))
 #define MBOX        (*(volatile uint32_t *)0xF1000000U)
 
+// Mailbox loss-curve protocol (the PS / host polls 0x41200000 via `md`):
+//   bit31=0  -> TRAINING checkpoint: bits[30:24]=checkpoint index, [23:0]=SSE
+//   bit31=1  -> DONE: 0x80000000 | (XOR_score<<16) | (final_SSE & 0xFFFF)
+// Each training checkpoint is HELD for ~2 s (busy loop) so a host md-poll at a
+// few hundred ms can sample the descending curve. NEORV32 uart0 is not pinned
+// out on this board (dfx_top.v leaves uart0_txd_o open), so the mailbox is the
+// only PS-visible channel — hence the loss curve goes through it, not printf.
+#define M7_CKPT_EVERY  200
+#define M7_HOLD_ITERS  30000000u    // ~1.5-3 s/checkpoint depending on FCLK0
+
 #define M7_BOARD            // exclude the golden self-check arrays from the build
 
 // array_macc() over the XBUS: load 4 INT8 weight rows, run one matmul, read the
@@ -86,12 +96,17 @@ int main(void) {
     i64 W1[4][4], W2[4][4], b1[4], b2[4];
     m7_init(W1, b1, W2, b2);
 
-    neorv32_uart0_printf("training %d epochs (loss every 200)...\n", M7_EPOCHS);
+    neorv32_uart0_printf("training %d epochs (loss -> mailbox)...\n", M7_EPOCHS);
     i64 sse = 0;
+    uint32_t ckpt = 0;
     for (int ep = 0; ep < M7_EPOCHS; ep++) {
         sse = m7_epoch(ep, W1, b1, W2, b2);
-        if (ep % 200 == 0 || ep == M7_EPOCHS - 1)
-            neorv32_uart0_printf("ep %d sse %d\n", ep, (int32_t)sse);
+        if (ep % M7_CKPT_EVERY == 0) {
+            // publish a training checkpoint (bit31=0) and HOLD so the host samples it
+            MBOX = ((ckpt & 0x7F) << 24) | ((uint32_t)sse & 0xFFFFFF);
+            ckpt++;
+            for (volatile uint32_t d = 0; d < M7_HOLD_ITERS; d++) { }
+        }
     }
 
     // final weights — host compares these against the oracle golden (expect exact).
@@ -112,10 +127,12 @@ int main(void) {
     }
     neorv32_uart0_printf("XOR %d/4  final sse %d  TRAIN DONE\n", ok, (int32_t)sse);
 
-    // publish a liveness/result word for the PS (low byte = XOR score, then sse).
+    // DONE marker (bit31=1): XOR score + final SSE. Held forever so the host
+    // poll sees a stable end-of-curve sentinel.
+    uint32_t done = 0x80000000u | ((uint32_t)ok << 16) | ((uint32_t)sse & 0xFFFF);
     uint32_t led = 0xF;
     while (1) {
-        MBOX = ((uint32_t)ok << 28) | ((uint32_t)(sse & 0xFFFFFF));
+        MBOX = done;
         neorv32_gpio_port_set(led);
         led ^= 0xF;
         for (volatile uint32_t d = 0; d < 400000; d++) { }
