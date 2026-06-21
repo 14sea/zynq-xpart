@@ -258,10 +258,31 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 >   the M6.4 "measure-then-yield": the RP attests at boot, then yields the same fabric to inference.
 > - Log: `/tmp/m64-bootseq.log` (host). Same static as M6.3 (pr_verify-compatible), so no static reload.
 
-### M6.5 (optional) — LUT-KCM weights via ICAP live-edit ("weights = reconfigurable identity")
+### M6.5 — LUT-KCM weights via ICAP live-edit ("weights = reconfigurable identity")  ✅ DONE & HW-VERIFIED (2026-06-21)
 This is the milestone where the project's ICAP/LUT live-edit work (M4/T2.2/T2.3) finally earns a
 *purpose* beyond a stunt: hold the TPU weights **as LUT-INIT constants** and swap models by
 ICAP-editing them live — "the chip's logic *is* the model."
+
+> **Done (2026-06-21), all hw-verified on the EBAZ4205:**
+> - **M6.5.0 fit-gate + sim**: worst-case all-LUT 4×4 multiply = 1193 Slice LUT (vs ~1600 RP
+>   headroom) → gate PASS. `rtl/dfx/{lutkcm_pe,lutkcm_array,tpu_accel_kcm,wb_tpu_accel_kcm,
+>   tpu_rp_rm_lutkcm}.v` (self-contained RM). `sim/tb_rm_lutkcm.v` loads NO weights → matmul
+>   RES=14,40,28,6 + mailbox 0x1019391F (2/2 PASS) → weights live in the fabric.
+> - **M6.5.1/.2 build**: `lutkcm_pe` holds each of the 8 weight bits as a `(* dont_touch *)` LUT6
+>   (inputs tied 0, INIT[0]=weight bit) → one weight bit = one editable physical LUT-INIT. AXI
+>   HWICAP @0x41400000 (icap_clk←FCLK0) added to the DFX static so the PS can ICAP-edit it over
+>   UART. impl_7: RP RM 3559/4400 LUT (81%), static 3649 (incl HWICAP), DSP 20→4, DRC 0, route 0,
+>   pr_verify impl_1-vs-impl_7 compatible. allowlist += `56372522` full / `b0332845` partial.
+> - **M6.5.2 controlled-diff**: flipping PE[0][0] weight bit1 (W 1→3) = exactly one CRAM bit
+>   `bit_00401a9a_059_31` (FAR 0x00401a9a, frame word 59) — clean single-frame edit; ICAP write
+>   seq built by `hwicap-make-framewrite.py` (233 words).
+> - **M6.5.2 ON-BOARD (miner U-Boot, AXI HWICAP)**: `fpga loadb static_full_lutkcm` → mailbox
+>   **`0x1019391F`** (baked-weight KCM TPU, NEORV32 looping); HWICAP healthy (SR=0x5, WFV=0x3f);
+>   `devcfg.CTRL` PCAP_PR=0 (`0x4c00e07f→0x4400e07f`); `hwicap-uart.py writeseq` the one frame →
+>   mailbox **`0x10193925`** (W[0][0]=3 → RES0 14→18 → POST0 31→37) — **live weight edited via a
+>   single ICAP LUT-INIT write, no partial reload, no PS/NEORV32 reset**; PCAP_PR restored to 1.
+>   The edited partial's hash is NOT in the allowlist → an `fpga loadbp` of it would be M5-refused
+>   (edited != trusted-as-built), exactly the intended guard.
 - New `rtl/dfx/tpu_rp_rm_lutkcm.v`: replace the DSP-multiply PEs with **LUT constant-coefficient
   multipliers (KCM)** whose INT8 weights are baked into LUT-INIT (`DONT_TOUCH`, located by the M4
   prjxray controlled-diff method). Same `tpu_rp` interface; VPU forward path unchanged.
