@@ -1,12 +1,19 @@
 # Phase 7 — M7: on-chip training (backprop) — the chip learns by itself
 
-> **STATUS: PLANNED.** Builds on M2 (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU:
-> bias / Leaky-ReLU / requant forward path), M3 (live DFX hot-swap), and M5 (measured-boot gate).
-> M7 is the first milestone that is **not** pure inference: it closes the loop and runs the
-> **backward pass + weight update on the board**, so the EBAZ4205 trains a tiny network end-to-end
-> with **no host doing the math**. tiny-tpu-v2/tiny-tpu is the algorithmic **reference** for the
-> three new pieces (MSE loss, Leaky-ReLU derivative, gradient descent) — **reference only, no RTL
-> vendored** (same policy as M6, see "Licensing / attribution").
+> **STATUS: M7.0 DONE & hardware-verified (2026-06-21); M7.1–M7.4 planned.** Builds on M2
+> (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU: bias / Leaky-ReLU / requant forward path),
+> M3 (live DFX hot-swap), and M5 (measured-boot gate). M7 is the first milestone that is **not**
+> pure inference: it closes the loop and runs the **backward pass + weight update on the board**, so
+> the EBAZ4205 trains a tiny network end-to-end with **no host doing the math**. tiny-tpu-v2/tiny-tpu
+> is the algorithmic **reference** for the three new pieces (MSE loss, Leaky-ReLU derivative,
+> gradient descent) — **reference only, no RTL vendored** (same policy as M6, see "Licensing").
+>
+> **M7.0 result:** on-board XOR training converges — the host watched the loss curve fall
+> (`ep0=469 → ep160=14 → … → 0`, **bit-exact to the numpy oracle at every sampled epoch**) and
+> `XOR 4/4, final SSE=0` via the PS mailbox. Forward `W·x` on the 4×4 INT8 array, all of
+> loss/δ/outer-product/SGD in NEORV32 software (the QAT hybrid: Q8.8 master, INT8 forward view).
+> No new RTL — reuses the M6 `rm_tpuvpu` RM with the VPU bypassed. Code: `sw/m7_train/`,
+> `sim/oracle_train.py`, `scripts/m7-watch-loss.py`.
 
 ## Goal
 
@@ -105,13 +112,21 @@ firmware.
 
 ## Phased plan (sub-milestones)
 
-### M7.0 — fixed-point training oracle + bring-up in firmware (no new RTL)
+### M7.0 — fixed-point training oracle + bring-up in firmware (no new RTL) — ✅ DONE & hw-verified
 - Pure NEORV32-software backprop using the **existing M6 forward hardware** for `W·x` only; loss,
   δ, outer product, update all in C with a chosen Q-format (Q8.8 master, INT8 forward view).
-- Host-side **numpy fixed-point reference** (same Q-format, same rounding/clamp as M6's requant
-  contract) — the golden oracle. Cross-check against tiny-tpu's `jupyter/` notebooks.
-- **Evidence**: XOR loss decreasing over epochs in simulation AND on-board (firmware reads `RES`,
-  computes the rest), final weights match the numpy oracle within ≤1 LSB of the master Q-format.
+- Host-side **numpy fixed-point reference** (`sim/oracle_train.py`) — the golden oracle. A portable-C
+  twin (`sw/m7_train/train_xor.c`) shares one kernel (`m7_kernel.h`) with the board firmware
+  (`sw/m7_train/main.c`); the only thing that differs is `array_macc()` (plain C on host, the 4×4
+  array XBUS sequence on board). Host-seeded init + sample order are baked from the oracle
+  (`m7_vectors.h`) — no on-board RNG.
+- **Evidence (achieved):** host C bit-exact to the oracle (weights + full 4000-epoch loss curve,
+  XOR 4/4, SSE=0). **On board:** the loss curve published progressively to the PS mailbox
+  (`0x41200000`) and watched live (`scripts/m7-watch-loss.py`) — `ep0=469, ep20=274, … ep160=14,
+  … 0`, **bit-exact to the oracle at every sampled epoch**, ending `XOR 4/4, final SSE=0`
+  (mailbox `0x80040000`). So the board reproduced the oracle's loss *trajectory*, not just the
+  endpoint. **Finding:** NEORV32 `uart0` is not pinned out on this board (`dfx_top.v`), so the
+  mailbox is the only PS-visible channel; the loss curve goes through it, not `printf`.
 
 ### M7.1 — array reuse for `Wᵀ·δ` (transpose-load)
 - Add `TRAIN_CTRL[1]` transpose-load to `wb_tpu_accel`/`systolic_array_4x4` (swap row/col select on

@@ -29,6 +29,8 @@ EBAZ4205 bring-up).
 | M5 | Measured-boot trust gate — a non-allowlisted (tampered) bitstream is refused | ✅ [docs/measured_boot.md](docs/measured_boot.md) |
 | #8 pt.2 | **prjxray independently names the edited bit** (`CLBLM_R_X17Y21.SLICEL_X1.ALUT.INIT[1]`) | ✅ |
 | #8 pt.1 | **ICAP self-reconfig — live LUT-INIT edit over ICAP from inside the fabric** (`0`↔`1`, no reset, no PCAP); PS-driven (HWICAP) **and** soft-core-driven (NEORV32→ICAPE2, no PS in the loop) | ✅ [docs/icap_investigation.md](docs/icap_investigation.md) |
+| M6 | **Forward TPU+VPU composition** (bias→Leaky-ReLU→INT8 requant) as a DFX RM, live-swapped in (mailbox `0x1019391F`); boot-RoT→TPU Model B; **LUT-KCM** weights baked as ICAP-editable LUT-INIT (`0x1019391F`→`0x10193925` by one live CRAM-bit edit) | ✅ [docs/m6_plan.md](docs/m6_plan.md) |
+| **M7.0** | **On-chip training** — the board trains XOR end-to-end (4×4 INT8 array forward + NEORV32 software backprop/SGD); host watches the loss curve fall **bit-exact to a numpy oracle** (`ep0=469→…→0`, `XOR 4/4`) via the PS mailbox | ✅ [docs/m7_plan.md](docs/m7_plan.md) |
 
 The core migration goal is met: both XPART tracks that the Cyclone-IV physically could **not**
 do — live module swap (Track A) and live single-LUT-truth-table editing (Track B) — run live on
