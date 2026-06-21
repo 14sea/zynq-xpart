@@ -189,7 +189,7 @@ exactly the "measure-then-yield / area-reclaim" pattern (M6 Model B), now applie
 - Live-swap `rm_train → rm_infer` over PCAP `loadbp` once `LOSS` plateaus — PS/NEORV32 never reset.
 
 Because each config drops the half it doesn't use, **each fits the existing `pblock_rp` with margin
-and no re-floorplan** — the tight ⚠️ row above goes away. This is "我們的方法" used where it actually
+and no re-floorplan** — the tight ⚠️ row above goes away. This is "our DFX method" used where it actually
 saves area (time-multiplex two large mutually-exclusive datapaths), and it folds naturally into the
 M7.3 train-then-yield story.
 
@@ -216,7 +216,7 @@ Keep `RESET_AFTER_RECONFIG true` + `SNAPPING_MODE ON`. **Re-enable `BITSTREAM.GE
 partials unless you still want M4 LUT-editing on this RP (training weights are in BRAM, not LUTs, so
 CRC-disable is no longer needed for M7's own purpose).
 
-## Open decisions / what still needs nailing down (the "還有什麼要補充" list)
+## Open decisions / what still needs nailing down (the "what else to add" list)
 
 These are flagged rather than silently defaulted — each can shift the RTL:
 

@@ -13,7 +13,7 @@ One sentence: **at power-on the board comes up as a measured root-of-trust; once
 chain of trust is established, the same fabric area is live-reconfigured into the full
 VPU-equipped TPU — no cold boot, no PS reset.**
 
-This is the literal "启动时 RoT，启动后切换到 TPU" request, realized as DFX time-multiplexing
+This is the literal "RoT at boot, switch to TPU after boot" request, realized as DFX time-multiplexing
 of the RP plus the M5 trust gate. It also lands the *full version* of the accelerator (the
 4×4 systolic array **+ a Vector Processing Unit**) that neither the EP4CE6 (area/timing
 ceiling) nor the current 4×4-only RM1 carries.
