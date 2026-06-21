@@ -156,20 +156,25 @@ report_utilization -file $bdir/impl5_util.rpt
 report_drc        -file $bdir/impl5_drc.rpt
 puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
 
-# M6.4: boot-time RoT-marker full (static + rm_rot) + its partial.
-launch_runs impl_6 -to_step write_bitstream -jobs 8
-wait_on_run impl_6
-puts "=== impl_6 (cfg6 rm_rot): [get_property STATUS [get_runs impl_6]] ==="
+# M6.4/M6.5 stretch RMs (rm_rot, rm_lutkcm) — already hardware-verified, so gate
+# them behind build_all like rm2/rm_lut. Default build = static (impl_1) + the
+# TPU+VPU partial (impl_5), which is exactly what M7.0b reuses (VPU bypassed).
+if {$build_all} {
+  # M6.4: boot-time RoT-marker full (static + rm_rot) + its partial.
+  launch_runs impl_6 -to_step write_bitstream -jobs 8
+  wait_on_run impl_6
+  puts "=== impl_6 (cfg6 rm_rot): [get_property STATUS [get_runs impl_6]] ==="
 
-# M6.5: LUT-KCM full (static + rm_lutkcm) + its partial. This place+route is the
-# REAL fit confirmation (OOC was unconstrained). Report RP utilization + DRC.
-launch_runs impl_7 -to_step write_bitstream -jobs 8
-wait_on_run impl_7
-puts "=== impl_7 (cfg7 rm_lutkcm): [get_property STATUS [get_runs impl_7]] ==="
-open_run impl_7
-report_utilization -file $bdir/impl7_util.rpt
-report_drc        -file $bdir/impl7_drc.rpt
-puts "=== impl_7 reports: $bdir/impl7_util.rpt , $bdir/impl7_drc.rpt ==="
+  # M6.5: LUT-KCM full (static + rm_lutkcm) + its partial. This place+route is the
+  # REAL fit confirmation (OOC was unconstrained). Report RP utilization + DRC.
+  launch_runs impl_7 -to_step write_bitstream -jobs 8
+  wait_on_run impl_7
+  puts "=== impl_7 (cfg7 rm_lutkcm): [get_property STATUS [get_runs impl_7]] ==="
+  open_run impl_7
+  report_utilization -file $bdir/impl7_util.rpt
+  report_drc        -file $bdir/impl7_drc.rpt
+  puts "=== impl_7 reports: $bdir/impl7_util.rpt , $bdir/impl7_drc.rpt ==="
+}
 
 puts "=== bitstreams ==="
 foreach b [glob -nocomplain $bdir/$proj.runs/impl_*/*.bit] { puts "  $b" }

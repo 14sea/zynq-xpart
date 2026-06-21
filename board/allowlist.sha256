@@ -24,3 +24,10 @@ c9b567474eb3dd2ff8c1b6ba9350b936aded4f3e09ef40de62289e3edb241894  full-static+RM
 # exactly as intended (edited != trusted-as-built).
 56372522387f6e427b861caa57f9b26b9ed6b53f1c2621c7a077ad951f4d16bf  full-static+RM_LUTKCM-hwicap
 b033284535b0c14fdf900926151fdebbe869b8a39d9a61e43db55ebca3ef8065  partial-RM_LUTKCM-baked
+# M7.0b (2026-06-21): on-chip XOR TRAINING firmware baked into the NEORV32 IMEM.
+# Same DFX static structure as M6.3 (rm_tpuvpu RM, VPU bypassed — training reads
+# the raw INT32 RES0-3 and does backprop/SGD in SW); only the IMEM image differs,
+# so the full-static hash is new. Boot this full static, watch the LOSS curve fall
+# over UART (host does no math). Built from vivado/dfx build impl_5.
+2658438e936b2fae869979f1710eadffebf0351c3f6a900198252ed6eff21fdb  full-static+RM_TPUVPU-M7TRAIN
+dd98a22133210c752c4956bcdc67b3a848699514b59ea1711ad4c665c59a9a3e  partial-RM_TPUVPU-M7TRAIN
