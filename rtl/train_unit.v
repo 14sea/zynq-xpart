@@ -68,29 +68,37 @@ module train_unit (
     reg signed [31:0] b2m;
     reg signed [31:0] d2r  [0:3];
     reg signed [31:0] d1r  [0:3];
-    reg signed [63:0] loss;
+    reg signed [31:0] loss;   // per-epoch SSE; small for XOR, fits 32-bit (saves a 64-bit adder)
 
     integer i;
 
     // ── fixed-point primitives (bit-exact to the oracle) ─────────────────────
-    function signed [31:0] sat16(input signed [63:0] v);
-        sat16 = (v > 64'sd32767)  ? 32'sd32767  :
-                (v < -64'sd32768) ? -32'sd32768 : v[31:0];
+    // 32-bit-wide (all operands fit: err ≤ ±2^20, δ ≤ ±2^14, master ≤ ±2^15).
+    function signed [31:0] sat16(input signed [31:0] v);
+        sat16 = (v > 32'sd32767)  ? 32'sd32767  :
+                (v < -32'sd32768) ? -32'sd32768 : v;
     endfunction
-    function signed [31:0] clampd(input signed [63:0] v);        // ±(1<<14)
-        clampd = (v > 64'sd16383)  ? 32'sd16383  :
-                 (v < -64'sd16384) ? -32'sd16384 : v[31:0];
+    function signed [31:0] clampd(input signed [31:0] v);        // ±(1<<14)
+        clampd = (v > 32'sd16383)  ? 32'sd16383  :
+                 (v < -32'sd16384) ? -32'sd16384 : v;
     endfunction
-    function signed [31:0] clamperr(input signed [63:0] v);      // ±(1<<20)
-        clamperr = (v > 64'sd1048575)  ? 32'sd1048575  :
-                   (v < -64'sd1048576) ? -32'sd1048576 : v[31:0];
+    function signed [31:0] clamperr(input signed [31:0] v);      // ±(1<<20)
+        clamperr = (v > 32'sd1048575)  ? 32'sd1048575  :
+                   (v < -32'sd1048576) ? -32'sd1048576 : v;
     endfunction
-    function signed [63:0] qmul64(input signed [63:0] a, input signed [63:0] b);
-        reg signed [63:0] p;
-        begin p = a * b; qmul64 = (p + 64'sd128) >>> 8; end       // round-half-up, arith
+    // leaky' applied to x, gated by the sign of z. Because the leaky negative slope
+    // is a power of two (2^-k), qmul(x, leaky'(z)) ≡ x (z>=0) or round(x / 2^k) — a
+    // rounding right SHIFT, NOT a multiply. This keeps train_unit off the scarce DSP
+    // column (the 4x4 array already uses 16 of the pblock's 20 DSP48E1). Bit-exact to
+    // the oracle: (z<0) → (x*(256>>k)+128)>>8 == (x + 2^(k-1)) >>>ₐ k.
+    function signed [31:0] leaky_apply(input signed [31:0] x, input signed [31:0] z);
+        leaky_apply = (z >= 0) ? x : ((x + (32'sd1 <<< (k - 6'd1))) >>> k);
     endfunction
-    function signed [31:0] leaky_d(input signed [31:0] z);        // 1.0 or 2^-k, in Q8.8
-        leaky_d = (z >= 0) ? 32'sd256 : (32'sd256 >>> k);
+    // MSE term round(err^2 / 256). err is clamped to ±2^20 so it fits 22-bit signed —
+    // the ONLY multiplier in train_unit (a 22x22 signed multiply, ≤2 DSP48E1).
+    function signed [31:0] qmul_sq(input signed [21:0] a);
+        reg signed [43:0] p;
+        begin p = a * a; qmul_sq = (p + 44'sd128) >>> 8; end       // round-half-up, arith
     endfunction
 
     // ── write / command engine ───────────────────────────────────────────────
@@ -118,16 +126,15 @@ module train_unit (
                 // (1)+(2) output layer: err = clamp(y - t), LOSS += qmul(err0,err0),
                 //         d2 = clamp(qmul(err, leaky'(z2)))
                 if (wdata[0]) begin
-                    loss <= loss + qmul64(clamperr($signed(ina[0]) - $signed(tin[0])),
-                                          clamperr($signed(ina[0]) - $signed(tin[0])));
+                    loss <= loss + qmul_sq(clamperr($signed(ina[0]) - $signed(tin[0])));
                     for (i = 0; i < 4; i = i + 1)
-                        d2r[i] <= clampd(qmul64(clamperr($signed(ina[i]) - $signed(tin[i])),
-                                                leaky_d(zin[i])));
+                        d2r[i] <= clampd(leaky_apply(clamperr($signed(ina[i]) - $signed(tin[i])),
+                                                     zin[i]));
                 end
                 // (2) hidden layer: d1 = clamp(qmul(w2td2, leaky'(z1)))
                 if (wdata[1]) begin
                     for (i = 0; i < 4; i = i + 1)
-                        d1r[i] <= clampd(qmul64($signed(ina[i]), leaky_d(zin[i])));
+                        d1r[i] <= clampd(leaky_apply($signed(ina[i]), zin[i]));
                 end
                 // (3) SGD update, output layer: W2 ← sat(W2 − dW2>>ₐLR), b2 ← sat(b2 − d2[0]>>ₐLR)
                 if (wdata[2]) begin
@@ -157,8 +164,7 @@ module train_unit (
         else if (addr == 7'd48)                  rdata = b2m;
         else if (addr >= 7'd52 && addr <= 7'd55) rdata = d2r[addr - 7'd52];
         else if (addr >= 7'd56 && addr <= 7'd59) rdata = d1r[addr - 7'd56];
-        else if (addr == 7'd60)                  rdata = loss[31:0];
-        else if (addr == 7'd61)                  rdata = loss[63:32];
+        else if (addr == 7'd60)                  rdata = loss;       // 32-bit SSE
         else                                     rdata = 32'd0;
     end
 
