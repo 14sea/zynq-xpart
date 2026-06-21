@@ -1,10 +1,11 @@
-// main.c — NEORV32 bare-metal firmware: on-board XOR TRAINING (M7.0b).
+// main.c — NEORV32 bare-metal firmware: on-board XOR TRAINING (M7.0b + M7.1).
 //
-// The board trains a 2-4-1 leaky-MLP to solve XOR end-to-end: forward W·x on the
-// 4x4 INT8 systolic array (the M6/M2 datapath), and loss / δ / outer-product /
-// SGD update on the NEORV32 in software — the hybrid-QAT split from m7_plan.md
-// (master weights Q8.8 in BRAM, INT8 forward view). The host only watches the
-// LOSS curve fall over UART; no host does the math.
+// The board trains a 2-4-1 leaky-MLP to solve XOR end-to-end. On the 4x4 INT8
+// systolic array (the M6/M2 datapath): the forward W·x AND the backward
+// input-grad Wᵀ·δ (M7.1, via transpose-load — see m7_kernel.h m7_w2t_delta).
+// Loss / δ / outer-product / SGD update stay on the NEORV32 in software — the
+// hybrid-QAT split from m7_plan.md (master weights Q8.8 in BRAM, INT8 view).
+// The host only watches the LOSS curve fall; no host does the math.
 //
 // The training math is the SHARED kernel (m7_kernel.h) already proven bit-exact
 // against the numpy oracle on the host (sw/m7_train/train_xor.c). The ONLY thing
@@ -79,8 +80,8 @@ int main(void) {
     neorv32_uart0_setup(BAUD_RATE, 0);
 
     neorv32_uart0_printf("\n=====================================\n");
-    neorv32_uart0_printf("  NEORV32 on-chip XOR TRAINING (M7.0b)\n");
-    neorv32_uart0_printf("  fwd W.x on 4x4 array, backprop in SW \n");
+    neorv32_uart0_printf("  NEORV32 on-chip XOR TRAINING (M7.1) \n");
+    neorv32_uart0_printf("  fwd W.x + bwd Wt.d on array; SGD SW \n");
     neorv32_uart0_printf("=====================================\n");
 
     VPU_CTRL = 0;          // training uses the raw INT32 acc; VPU bypassed

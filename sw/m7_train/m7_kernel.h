@@ -60,6 +60,25 @@ static void m7_matmul(const i64 W[4][4], const i64 x[4], i64 z[4]) {
     }
 }
 
+// M7.1: input-grad Wᵀ·δ on the SAME 4x4 INT8 array via transpose-load. The array
+// computes acc[i]=Σⱼ Wi[i][j]·xi[j], so to get (W2ᵀ·d2)[i]=Σⱼ W2[j][i]·d2[j] we
+// load the *transposed* INT8 weights (Wi[i][j]=quant(W2[j][i])) and feed d2 as the
+// activation. Software transpose of a 4x4 — no new RTL; the HW TRAIN_CTRL[1]
+// row/col-swap load is a deferred optimization. Requant mirrors the forward path.
+static void m7_w2t_delta(const i64 W2[4][4], const i64 d2[4], i64 out[4]) {
+    i8 WiT[4][4], di[4];
+    int32_t acc[4];
+    for (int j = 0; j < 4; j++) di[j] = (i8)m7_q8(d2[j], M7_DSHIFT);
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++) WiT[i][j] = (i8)m7_q8(W2[j][i], M7_WSHIFT);  // transpose-load
+    array_macc(WiT, di, acc);                      // <-- 4x4 systolic array (reused)
+    int down = 8 - M7_WSHIFT - M7_DSHIFT;
+    for (int i = 0; i < 4; i++) {
+        i64 a = acc[i];
+        out[i] = m7_sat((down > 0) ? ((a + (1 << (down - 1))) >> down) : (a << (-down)));
+    }
+}
+
 static void m7_forward(const i64 W1[4][4], const i64 b1[4],
                        const i64 W2[4][4], const i64 b2[4],
                        const i64 x[4], i64 z1[4], i64 h[4], i64 z2[4], i64 y[4]) {
@@ -102,14 +121,12 @@ static i64 m7_epoch(int ep, i64 W1[4][4], i64 b1[4], i64 W2[4][4], i64 b2[4]) {
         for (int i = 0; i < 4; i++)
             for (int j = 0; j < 4; j++) dW2[i][j] = m7_qmul(d2[i], h[j]);    // d2 (x) h^T
 
-        // delta1 = (W2^T . d2) (.) leaky'(z1) -- transpose reuse (Problem 1),
-        // in master Q8.8 precision (matches the oracle).
-        for (int i = 0; i < 4; i++) {
-            i64 acc = 0;
-            for (int j = 0; j < 4; j++) acc += W2[j][i] * d2[j];            // W2^T . d2
-            i64 w2td2 = (acc + (1 << (M7_FRAC - 1))) >> M7_FRAC;
-            d1[i] = m7_clamp(m7_qmul(w2td2, m7_leaky_d(z1[i])), -(1 << 14), (1 << 14) - 1);
-        }
+        // delta1 = (W2^T . d2) (.) leaky'(z1) -- transpose reuse (Problem 1).
+        // M7.1: the W2^T . d2 matmul runs on the INT8 array (m7_w2t_delta).
+        i64 w2td2[4];
+        m7_w2t_delta(W2, d2, w2td2);
+        for (int i = 0; i < 4; i++)
+            d1[i] = m7_clamp(m7_qmul(w2td2[i], m7_leaky_d(z1[i])), -(1 << 14), (1 << 14) - 1);
         for (int i = 0; i < 4; i++)
             for (int j = 0; j < 4; j++) dW1[i][j] = m7_qmul(d1[i], x[j]);   // d1 (x) x^T
 
