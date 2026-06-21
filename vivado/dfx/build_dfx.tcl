@@ -30,8 +30,11 @@ set_property -dict [list CONFIG.PCW_USE_M_AXI_GP0 {1} CONFIG.PCW_EN_CLK0_PORT {1
 set gpio [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio axi_gpio_0]
 set_property -dict [list CONFIG.C_GPIO_WIDTH {32} CONFIG.C_ALL_INPUTS {1} \
   CONFIG.C_IS_DUAL {1} CONFIG.C_GPIO2_WIDTH {1} CONFIG.C_ALL_INPUTS_2 {1}] $gpio
+# M6.5.2: AXI HWICAP in the DFX static so a weight LUT-INIT can be ICAP-edited
+# live (icap_clk tied to FCLK0, the T2.1/T2.2-proven wiring).
+set hwi [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_hwicap axi_hwicap_0]
 set ic [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect axi_ic_0]
-set_property CONFIG.NUM_MI {1} $ic
+set_property CONFIG.NUM_MI {2} $ic
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_0
 create_bd_port -dir O fclk_o
 create_bd_port -dir O rstn_o
@@ -39,21 +42,32 @@ create_bd_port -dir I -from 31 -to 0 mbox_i
 create_bd_port -dir I mbox_valid_i
 set clk [get_bd_pins ps7_0/FCLK_CLK0]
 foreach p {ps7_0/M_AXI_GP0_ACLK axi_ic_0/ACLK axi_ic_0/S00_ACLK axi_ic_0/M00_ACLK \
-           axi_gpio_0/s_axi_aclk rst_0/slowest_sync_clk} {
+           axi_ic_0/M01_ACLK axi_gpio_0/s_axi_aclk \
+           axi_hwicap_0/s_axi_aclk axi_hwicap_0/icap_clk rst_0/slowest_sync_clk} {
   connect_bd_net $clk [get_bd_pins $p]
 }
 connect_bd_net $clk [get_bd_ports fclk_o]
 connect_bd_net [get_bd_pins ps7_0/FCLK_RESET0_N] [get_bd_pins rst_0/ext_reset_in]
-foreach p {axi_ic_0/ARESETN axi_ic_0/S00_ARESETN axi_ic_0/M00_ARESETN} {
+foreach p {axi_ic_0/ARESETN axi_ic_0/S00_ARESETN axi_ic_0/M00_ARESETN axi_ic_0/M01_ARESETN} {
   connect_bd_net [get_bd_pins rst_0/interconnect_aresetn] [get_bd_pins $p]
 }
 connect_bd_net [get_bd_pins rst_0/peripheral_aresetn] [get_bd_pins axi_gpio_0/s_axi_aresetn]
+connect_bd_net [get_bd_pins rst_0/peripheral_aresetn] [get_bd_pins axi_hwicap_0/s_axi_aresetn]
 connect_bd_net [get_bd_pins rst_0/peripheral_aresetn] [get_bd_ports rstn_o]
 connect_bd_intf_net [get_bd_intf_pins ps7_0/M_AXI_GP0]  [get_bd_intf_pins axi_ic_0/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins axi_ic_0/M00_AXI] [get_bd_intf_pins axi_gpio_0/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins axi_ic_0/M01_AXI] [get_bd_intf_pins axi_hwicap_0/S_AXI_LITE]
 connect_bd_net [get_bd_ports mbox_i]       [get_bd_pins axi_gpio_0/gpio_io_i]
 connect_bd_net [get_bd_ports mbox_valid_i] [get_bd_pins axi_gpio_0/gpio2_io_i]
 assign_bd_address
+# Pin mailbox GPIO @0x41200000 (M6.3 convention) and HWICAP @0x41400000
+# (hwicap-uart.py default). catch -> tolerate seg-path naming differences.
+catch {assign_bd_address -force -offset 0x41200000 -range 64K [get_bd_addr_segs axi_gpio_0/S_AXI/Reg]}
+catch {assign_bd_address -force -offset 0x41400000 -range 64K [get_bd_addr_segs axi_hwicap_0/S_AXI_LITE/Reg]}
+puts "=== ADDRESS MAP ==="
+foreach seg [get_bd_addr_segs -of_objects [get_bd_addr_spaces ps7_0/Data]] {
+  puts "  $seg -> [get_property OFFSET $seg] range [get_property RANGE $seg]"
+}
 validate_bd_design
 save_bd_design
 make_wrapper -files [get_files ps.bd] -top -import

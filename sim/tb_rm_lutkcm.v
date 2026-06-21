@@ -6,7 +6,7 @@
 // and the VPU produced the same packed mailbox value 0x1019391F. If the baked
 // weights were wrong (or the load path were secretly needed), RES would differ.
 //
-// Run: iverilog -g2012 -o /tmp/tb_kcm.vvp \
+// Run: iverilog -g2012 -DSIM -o /tmp/tb_kcm.vvp \
 //        rtl/dfx/lutkcm_pe.v rtl/dfx/lutkcm_array.v rtl/dfx/tpu_accel_kcm.v \
 //        rtl/dfx/wb_tpu_accel_kcm.v rtl/vpu.v rtl/dfx/tpu_rp_rm_lutkcm.v \
 //        sim/tb_rm_lutkcm.v && vvp /tmp/tb_kcm.vvp
