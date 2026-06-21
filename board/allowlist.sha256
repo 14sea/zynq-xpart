@@ -8,3 +8,10 @@ b5139ca893dd85b048790a0ac63f03067e4db994b6bce83aec7cb6b29d43c4c2  partial-RM2-al
 # the NEORV32 IMEM (weights reloaded each pass so a live loadbp RP-reset is survived).
 f15b6e53983152cc6ccaa442b41e5874360d9a795d63cc66aa3612dc5e91b923  full-static+RM_TPUVPU
 a69b63bff4ddbe65e860da6fc4ce7a7d17ddf27bbdd7f72b7db119cb51e8d80a  partial-RM_TPUVPU-tpu+vpu
+# M6.4 (2026-06-21, Model B): RP-resident boot-time RoT-marker module (no compute,
+# mailbox publishes 0x600DB007). The board boots the static+rm_rot full so the RP
+# comes up in RoT state; the measured gate passes; then loadbp swaps the same RP to
+# rm_tpuvpu (-> 0x1019391F) -- the "measure-then-yield" path. Same static as M6.3
+# (pr_verify: impl_1 vs impl_6 compatible), so rm_tpuvpu/rm_rot partials interswap.
+c9b567474eb3dd2ff8c1b6ba9350b936aded4f3e09ef40de62289e3edb241894  full-static+RM_ROT
+4549d5ca19c7ebf6835ea33d67b59d47c961d6a7ab728c7e781bb5bc83c93f3e  partial-RM_ROT-marker

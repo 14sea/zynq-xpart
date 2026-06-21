@@ -227,12 +227,30 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 - **Evidence**: `md 0x41200000` transition RoT-marker → inference result; `dbg_leds` change on
   swap; PS + NEORV32 UART heartbeat uninterrupted across the `loadbp`; rejected-partial log.
 
-### M6.4 (stretch, Model B) — RP-resident RoT module
+### M6.4 (stretch, Model B) — RP-resident RoT module  🔧 BUILT + HOST-WIRED (2026-06-21), on-board verify PENDING
 - Add `rtl/dfx/tpu_rp_rm_rot.v` (boot-time measurement/attestation engine on the `tpu_rp`
   interface) and `config_rot`; sequence RP `rm_rot` → measure → `loadbp` `rm_tpuvpu`,
   reclaiming the RP area.
 - **Evidence**: RP loaded with rm_rot at boot (distinct marker), then live-swapped to rm_tpuvpu
   with PS uninterrupted.
+
+> **Done so far (build + host, 2026-06-21):**
+> - `rtl/dfx/tpu_rp_rm_rot.v` (53 lines): RoT-marker RM on the `tpu_rp` interface — no compute,
+>   `STATUS.done=1`, publishes mailbox **`0x600DB007`** ("good boot", POST {0x07,0xB0,0x0D,0x60}),
+>   `dbg_leds=4'b0110` (distinct from rm_tpuvpu). Marker is read by the *unchanged* tpu_vpu_firmware.
+> - `build_dfx.tcl`: added `create_reconfig_module rm_rot` + `cfg6` + `impl_6`. Build `write_bitstream
+>   Complete!` (2026-06-20 21:52), **DRC 0 Errors**, partial 5 155 424 bits.
+> - **`pr_verify`: impl_1 (static) vs impl_6 (static+rm_rot) compatible** → rm_rot/rm_tpuvpu partials
+>   interswap on the same static, no static rebuild needed.
+> - Staged to `vivado/dfx/m6_out/`: `static_full_rot.bit` (boot full, RP=RoT) + `rm_rot_partial.bit`.
+> - `board/allowlist.sha256`: added `full-static+RM_ROT` (`c9b56747…`) + `partial-RM_ROT-marker`
+>   (`4549d5ca…`).
+> - `scripts/boot-sequence.sh --model-b`: boots `static_full_rot` (RP up as RoT → `0x600DB007`),
+>   measured-gate, then `loadbp rm_tpuvpu` (→ `0x1019391F`). `--dry-run` passes the gate for both models.
+>
+> **PENDING (on-board, needs board powered at miner U-Boot):** run `boot-sequence.sh --model-b` and
+> confirm `md 0x41200000` shows **`0x600DB007` (RoT) → `0x1019391F` (TPU+VPU)** across the live
+> `loadbp` with PS/NEORV32 heartbeat uninterrupted, and `dbg_leds` 0110 → tpu pattern.
 
 ### M6.5 (optional) — LUT-KCM weights via ICAP live-edit ("weights = reconfigurable identity")
 This is the milestone where the project's ICAP/LUT live-edit work (M4/T2.2/T2.3) finally earns a
