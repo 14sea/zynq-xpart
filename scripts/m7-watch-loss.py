@@ -6,7 +6,7 @@ AXI 0x41200000 (NEORV32 uart0 is not pinned out on this board, so the mailbox is
 the only channel). This script polls that word over the U-Boot console (`md`)
 and decodes the protocol from sw/m7_train/main.c:
 
-  bit31=0 -> TRAINING checkpoint: bits[30:24]=index, [23:0]=SSE  (held ~2 s each)
+  bit31=0 -> TRAINING checkpoint: bits[30:16]=epoch (<=3999), [15:0]=SSE
   bit31=1 -> DONE: 0x80000000 | (XOR_score<<16) | (final_SSE & 0xFFFF)
 
 Run it right after `fpga loadb` of the M7 static while the board trains.
@@ -59,11 +59,11 @@ def main():
             sse = v & 0xFFFF
             print(f"[watch] DONE: XOR {ok}/4, final SSE={sse}  (mbox=0x{v:08x})")
             return 0 if (ok == 4) else 1
-        idx = (v >> 24) & 0x7F
-        sse = v & 0xFFFFFF
-        if idx not in seen:
-            seen[idx] = sse
-            print(f"[watch] ckpt {idx:2d}  epoch~{idx*200:4d}  SSE={sse}")
+        epoch = (v >> 16) & 0x7FFF
+        sse = v & 0xFFFF
+        if epoch not in seen:
+            seen[epoch] = sse
+            print(f"[watch] epoch {epoch:4d}  SSE={sse}")
         time.sleep(args.interval)
     print("[watch] TIMEOUT — no DONE marker seen", file=sys.stderr)
     return 2

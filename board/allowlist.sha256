@@ -32,5 +32,5 @@ b033284535b0c14fdf900926151fdebbe869b8a39d9a61e43db55ebca3ef8065  partial-RM_LUT
 # scripts/m7-watch-loss.py. Built from vivado/dfx build impl_5.
 # (Superseded the first M7TRAIN build 2658438e/dd98a221, which had no progressive
 # mailbox loss output.)
-7770efcbaa5fa453c8ae7aa63b451a49682a480ed6cf5eb9419f2b7184330c80  full-static+RM_TPUVPU-M7TRAIN
-715d660ae05a9bb15a54b28a00ca360fd21b5fec556c6a7716b23d06c992b79a  partial-RM_TPUVPU-M7TRAIN
+76f2a46a19af54600872411c49611909f517f124bbf4ebf2804e9c7ffadeeb3b  full-static+RM_TPUVPU-M7TRAIN
+5daedaa3ab61e8c3cbaf861d9a30a9ce5146acf4493894e0670f059357a08b19  partial-RM_TPUVPU-M7TRAIN

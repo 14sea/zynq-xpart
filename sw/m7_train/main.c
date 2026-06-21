@@ -32,14 +32,16 @@
 #define MBOX        (*(volatile uint32_t *)0xF1000000U)
 
 // Mailbox loss-curve protocol (the PS / host polls 0x41200000 via `md`):
-//   bit31=0  -> TRAINING checkpoint: bits[30:24]=checkpoint index, [23:0]=SSE
+//   bit31=0  -> TRAINING checkpoint: bits[30:16]=epoch (<=3999), [15:0]=SSE
 //   bit31=1  -> DONE: 0x80000000 | (XOR_score<<16) | (final_SSE & 0xFFFF)
-// Each training checkpoint is HELD for ~2 s (busy loop) so a host md-poll at a
-// few hundred ms can sample the descending curve. NEORV32 uart0 is not pinned
-// out on this board (dfx_top.v leaves uart0_txd_o open), so the mailbox is the
-// only PS-visible channel — hence the loss curve goes through it, not printf.
-#define M7_CKPT_EVERY  200
-#define M7_HOLD_ITERS  30000000u    // ~1.5-3 s/checkpoint depending on FCLK0
+// Checkpoints are dense over the first 200 epochs (every 20 — that is where the
+// loss actually falls, ~469 -> ~0) then sparse (every 400) for the flat tail.
+// Each checkpoint is HELD (busy loop) so a host md-poll at a few hundred ms can
+// sample it; the epoch-0 peak is held 4x longer so watcher-start latency can't
+// miss it (it did last time). NEORV32 uart0 is not pinned out on this board
+// (dfx_top.v leaves uart0_txd_o open), so the mailbox is the only PS-visible
+// channel — hence the loss curve goes through it, not printf.
+#define M7_HOLD_ITERS  60000000u    // ~3-5 s/checkpoint depending on FCLK0
 
 #define M7_BOARD            // exclude the golden self-check arrays from the build
 
@@ -98,14 +100,14 @@ int main(void) {
 
     neorv32_uart0_printf("training %d epochs (loss -> mailbox)...\n", M7_EPOCHS);
     i64 sse = 0;
-    uint32_t ckpt = 0;
     for (int ep = 0; ep < M7_EPOCHS; ep++) {
         sse = m7_epoch(ep, W1, b1, W2, b2);
-        if (ep % M7_CKPT_EVERY == 0) {
-            // publish a training checkpoint (bit31=0) and HOLD so the host samples it
-            MBOX = ((ckpt & 0x7F) << 24) | ((uint32_t)sse & 0xFFFFFF);
-            ckpt++;
-            for (volatile uint32_t d = 0; d < M7_HOLD_ITERS; d++) { }
+        int do_ckpt = (ep < 200) ? (ep % 20 == 0) : (ep % 400 == 0);
+        if (do_ckpt) {
+            // publish a training checkpoint (bit31=0, epoch+SSE) and HOLD so the host samples it
+            MBOX = ((uint32_t)ep << 16) | ((uint32_t)sse & 0xFFFF);
+            uint32_t hold = (ep == 0) ? (M7_HOLD_ITERS * 4) : M7_HOLD_ITERS;
+            for (volatile uint32_t d = 0; d < hold; d++) { }
         }
     }
 
