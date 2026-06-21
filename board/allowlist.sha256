@@ -15,3 +15,10 @@ a69b63bff4ddbe65e860da6fc4ce7a7d17ddf27bbdd7f72b7db119cb51e8d80a  partial-RM_TPU
 # (pr_verify: impl_1 vs impl_6 compatible), so rm_tpuvpu/rm_rot partials interswap.
 c9b567474eb3dd2ff8c1b6ba9350b936aded4f3e09ef40de62289e3edb241894  full-static+RM_ROT
 4549d5ca19c7ebf6835ea33d67b59d47c961d6a7ab728c7e781bb5bc83c93f3e  partial-RM_ROT-marker
+# M6.5 (2026-06-21): LUT-KCM RM = 4x4 baked-weight TPU + VPU. The 16 INT8 weights
+# are LUT constants ("the logic is the model"); impl_7 placed RP = 3501/4400 LUT
+# (80%), DSP 20->4, DRC 0, pr_verify impl_1-vs-impl_7 compatible. A live ICAP
+# weight edit (M6.5.2) produces a partial NOT on this list -> M5 gate refuses it,
+# exactly as intended (edited != trusted-as-built).
+b630aac215ab2161eb64ff4f4ac246c04c8e510d274c06fcea246adfedff2696  full-static+RM_LUTKCM
+1b5c4f3ab250b4506e5621006b7dbe2cfa6261e4ee4f6e9cad363e2d1ec224ae  partial-RM_LUTKCM-baked

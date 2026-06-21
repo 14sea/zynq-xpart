@@ -84,12 +84,21 @@ add_files -norecurse -of_objects [get_reconfig_modules rm_tpuvpu] \
 # M6.4 (Model B): boot-time RoT-marker RM (self-contained, like rm2_alt).
 create_reconfig_module -name rm_rot -partition_def [get_partition_defs tpu_pd] -top tpu_rp
 add_files -norecurse -of_objects [get_reconfig_modules rm_rot] $root/rtl/dfx/tpu_rp_rm_rot.v
+# M6.5: LUT-KCM RM = 4x4 baked-weight TPU + VPU. Fully self-contained (own accel
+# chain copies) so it shares no submodule fileset with rm1/rm_tpuvpu. vpu.v is
+# shared with rm_tpuvpu's fileset (a source may live in multiple RM filesets).
+create_reconfig_module -name rm_lutkcm -partition_def [get_partition_defs tpu_pd] -top tpu_rp
+add_files -norecurse -of_objects [get_reconfig_modules rm_lutkcm] \
+    [list $root/rtl/dfx/tpu_rp_rm_lutkcm.v $root/rtl/vpu.v \
+          $root/rtl/dfx/wb_tpu_accel_kcm.v $root/rtl/dfx/tpu_accel_kcm.v \
+          $root/rtl/dfx/lutkcm_array.v $root/rtl/dfx/lutkcm_pe.v]
 create_pr_configuration -name cfg1 -partitions [list $rp_cell:rm1_tpu]
 create_pr_configuration -name cfg2 -partitions [list $rp_cell:rm2_alt]
 create_pr_configuration -name cfg3 -partitions [list $rp_cell:rm_lut]
 create_pr_configuration -name cfg4 -partitions [list $rp_cell:rm_lut_b]
 create_pr_configuration -name cfg5 -partitions [list $rp_cell:rm_tpuvpu]
 create_pr_configuration -name cfg6 -partitions [list $rp_cell:rm_rot]
+create_pr_configuration -name cfg7 -partitions [list $rp_cell:rm_lutkcm]
 add_files -fileset constrs_1 -norecurse $origin/pblock_rp.xdc
 
 set_property PR_CONFIGURATION cfg1 [get_runs impl_1]
@@ -98,6 +107,7 @@ create_run impl_3 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]]
 create_run impl_4 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg4
 create_run impl_5 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg5
 create_run impl_6 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg6
+create_run impl_7 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg7
 
 # M6.1: by default build only the static (impl_1, the locked parent) + the new
 # TPU+VPU partial (impl_5). rm2/rm_lut/rm_lut_b are unchanged & already
@@ -136,6 +146,16 @@ puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
 launch_runs impl_6 -to_step write_bitstream -jobs 8
 wait_on_run impl_6
 puts "=== impl_6 (cfg6 rm_rot): [get_property STATUS [get_runs impl_6]] ==="
+
+# M6.5: LUT-KCM full (static + rm_lutkcm) + its partial. This place+route is the
+# REAL fit confirmation (OOC was unconstrained). Report RP utilization + DRC.
+launch_runs impl_7 -to_step write_bitstream -jobs 8
+wait_on_run impl_7
+puts "=== impl_7 (cfg7 rm_lutkcm): [get_property STATUS [get_runs impl_7]] ==="
+open_run impl_7
+report_utilization -file $bdir/impl7_util.rpt
+report_drc        -file $bdir/impl7_drc.rpt
+puts "=== impl_7 reports: $bdir/impl7_util.rpt , $bdir/impl7_drc.rpt ==="
 
 puts "=== bitstreams ==="
 foreach b [glob -nocomplain $bdir/$proj.runs/impl_*/*.bit] { puts "  $b" }
