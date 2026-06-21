@@ -1,6 +1,6 @@
 # Phase 7 — M7: on-chip training (backprop) — the chip learns by itself
 
-> **STATUS: M7.0 DONE & hardware-verified (2026-06-21); M7.1–M7.4 planned.** Builds on M2
+> **STATUS: M7.0 + M7.1 DONE & hardware-verified (2026-06-21); M7.2–M7.4 planned.** Builds on M2
 > (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU: bias / Leaky-ReLU / requant forward path),
 > M3 (live DFX hot-swap), and M5 (measured-boot gate). M7 is the first milestone that is **not**
 > pure inference: it closes the loop and runs the **backward pass + weight update on the board**, so
@@ -128,10 +128,61 @@ firmware.
   endpoint. **Finding:** NEORV32 `uart0` is not pinned out on this board (`dfx_top.v`), so the
   mailbox is the only PS-visible channel; the loss curve goes through it, not `printf`.
 
-### M7.1 — array reuse for `Wᵀ·δ` (transpose-load)
-- Add `TRAIN_CTRL[1]` transpose-load to `wb_tpu_accel`/`systolic_array_4x4` (swap row/col select on
-  weight load — Problem 1). Verify `Wᵀ·δ` on the array equals the software transpose-matmul.
-- **Evidence**: sim + on-board, input-grad from the array == software oracle; XOR still converges.
+### M7.1 — array reuse for `Wᵀ·δ` (transpose-load) — ✅ DONE & hw-verified (2026-06-21)
+- Backward input-grad `Wᵀ·δ` now runs on the **same 4×4 INT8 array** as the forward pass, via a
+  **software transpose-load**: load `Wi[i][j] = quant(W2[j][i])` into the existing `array_macc` and feed
+  `δ` as the activation (`m7_w2t_delta` in `sw/m7_train/m7_kernel.h`). No new RTL — the hardware
+  `TRAIN_CTRL[1]` row/col-swap load is deferred. Forward `W·x` is on the array too; loss/δ/outer-product/
+  SGD stay in NEORV32 software (the M7.0 split).
+- **Evidence**: host bit-exact to the oracle (`make -f Makefile.host check`), and on the EBAZ4205 the
+  full loss curve is **bit-exact to the oracle at all 19 sampled epochs** (ep0=469 ep20=277 … ep180=4
+  ep400..3600=0) ending **DONE `0x80040000` = XOR 4/4, final SSE=0**. Allowlisted settle build:
+  full-static `14180df3…`, partial `1c813005…`.
+
+#### ⚠️ The post-config settle gotcha (the hard part of M7.1) — and how it was diagnosed
+Bringing M7.1 up on real silicon exposed a deterministic on-board failure that does **not** reproduce
+in functional simulation. Documented here in full because it will bite any later milestone (M7.2+) that
+starts compute immediately after `fpga loadb`.
+
+- **Symptom.** Training that begins right after the PL is configured **diverges from epoch 0** with
+  *deterministic, byte-identical* garbage (board ep0=5726, ep20=45343, …, never reaches XOR 4/4 — the
+  loss "bounces" forever). Identical across independent rebuilds, so not a place-and-route lottery.
+- **It is NOT an RTL bug.** `sim/tb_m7_transpose.v` drives `wb_tpu_accel` with the *exact* firmware
+  `array_macc` bus sequence over 7 cases — dense, transpose, negative weights, three back-to-back calls,
+  the exact zero-row pattern `[[5,6,7,8],0,0,0]·[1,1,1,1]→[26,0,0,0]`, and a worst-case *fill all four
+  lanes = 400 then a zero-row* — and passes **7/7**. The `tpu_accel` `CTRL[4]` accumulator clear and the
+  `!bulk_active` ready-gating (which stalls the bus through the 3-cycle weight bulk-load so no write is
+  dropped) are both correct and have been in the bitstream since the Phase-2a port. So the array logic
+  is sound.
+- **It is NOT a stale/cold-array problem either.** A settle-diagnostic firmware re-ran a self-check macc
+  *and* a mixed-sign/zero-row macc every ~5 s, comparing the hardware accumulators against an in-firmware
+  plain-C recompute of the same matmul (no host golden needed) and publishing the match to the mailbox.
+  Result: **isolated `array_macc` reads back correct from very early (a few seconds after config) all the
+  way through** — there is no "garbage window" for standalone maccs.
+- **The cure is wall-clock TIME, not warm-up count.** Two controlled rebuilds settled it:
+  - a **pure-count** warm-up — 256 dummy maccs back-to-back (<10 ms), then train — still **diverged**
+    (DONE = XOR 2/4);
+  - the same/fewer maccs **spread over ~130 s** (the diagnostic) → training then ran **bit-exact**.
+
+  256 maccs in 10 ms fails while ~60 maccs over ~130 s succeeds ⇒ elapsed time is the active ingredient.
+  The predictor "is there a real pre-training delay?" matched **every** on-board build: the 5 with no
+  delay (3 original + the clean no-probe + the 256-macc pure-count) all diverged; the 3 with a delay (the
+  early probe build, the ~130 s diagnostic, and the shipped ~45 s settle) all converged — **8/8**.
+  (Per-call `hw_flush`, a dummy zero-macc before every real one, does **not** help: it adds maccs, not
+  time.) Mechanistically the first SGD step lands on a bad matmul, corrupts the Q8.8 master weights, and
+  the run never recovers even once the array is "good" — which is why the settle must happen **before the
+  first weight update**, not merely before the first matmul.
+- **The fix (shipped).** `sw/m7_train/main.c` runs 16 warm-up maccs **plus an `M7_SETTLE_ITERS` (~45 s)
+  busy-wait before the training loop**. `hw_flush` is retained as harmless belt-and-suspenders.
+- **Open root cause.** Why isolated maccs are correct within seconds but *training* needs ~tens of seconds
+  of settle is still not understood. Candidates: FCLK0/PLL jitter settling, a config-time power-rail
+  droop that takes seconds to recover, or DFX decoupling release. Pinning it needs instrumentation we
+  haven't applied yet (a scope on FCLK0, or XADC on-die temperature/voltage). The ~45 s startup is also
+  ugly for a live demo — a future pass could binary-search the minimum settle (each probe = one
+  rebuild+load+verify cycle).
+- **Tooling gotcha worth keeping.** A background watcher whose own command line contains the string it
+  greps for (`until ! pgrep -f uboot-fpga-load`) **matches itself**, so the wait-loop never exits and the
+  watcher hangs producing no output. Match a more specific pattern or use a PID file.
 
 ### M7.2 — hardware loss / leaky' / weight-update units (the tiny-tpu trio)
 - `rtl/train_unit.v`: MSE loss + `dL/dy`, leaky-ReLU derivative gate, and `grad_descent`
