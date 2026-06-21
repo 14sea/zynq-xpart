@@ -6,14 +6,23 @@ CFLAGS  ?= -O2 -Wall -Wextra -std=c99
 ORACLE   = ../../sim/oracle_train.py
 HEADER   = m7_vectors.h
 
-.PHONY: check header clean
+.PHONY: check check-hw header tu-golden clean
 check: $(HEADER) train_xor.c
 	$(CC) $(CFLAGS) -o /tmp/train_xor train_xor.c
 	/tmp/train_xor
+
+# M7.2: validate the HW-trio split (train_unit modelled in C) bit-exact vs the oracle.
+check-hw: $(HEADER) train_xor_hw.c m7_kernel_hw.h
+	$(CC) $(CFLAGS) -o /tmp/train_xor_hw train_xor_hw.c
+	/tmp/train_xor_hw
 
 # Regenerate the golden header from the oracle (golden config defaults).
 header:
 	python3 $(ORACLE) --dump-header $(HEADER)
 
+# M7.2: regenerate the train_unit per-sample golden trace for sim/tb_train.v.
+tu-golden:
+	python3 $(ORACLE) --dump-tu ../../sim/tb_train_golden --tu-samples 64
+
 clean:
-	rm -f /tmp/train_xor
+	rm -f /tmp/train_xor /tmp/train_xor_hw
