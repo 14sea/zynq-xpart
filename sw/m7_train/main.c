@@ -43,12 +43,32 @@
 // (dfx_top.v leaves uart0_txd_o open), so the mailbox is the only PS-visible
 // channel — hence the loss curve goes through it, not printf.
 #define M7_HOLD_ITERS  60000000u    // ~3-5 s/checkpoint depending on FCLK0
+#define M7_SETTLE_ITERS 90000000u   // ~45 s post-config settle before training
 
 #define M7_BOARD            // exclude the golden self-check arrays from the build
+
+// hw_flush(): warm-up scrub before every matmul. Loads all-zero weights and runs
+// one compute on a zero input, then re-clears the accumulators. The RTL array is
+// provably clean without this (sim/tb_m7_transpose.v: 7/7 incl. zero-row and
+// fill-then-zero-row worst case), BUT on real EBAZ4205 silicon the first/back-to-
+// back array_macc after PL config produced lane1-3 garbage that this warm-up + the
+// fences below eliminate (loss curve then matches the oracle bit-exactly). Kept as
+// the empirical fix; the underlying first-macc/timing effect is left as open root-
+// cause. Cheap relative to the per-epoch backprop, so always on.
+static void hw_flush(void) {
+    for (int r = 0; r < 4; r++) { TPU_W_ADDR = (uint32_t)(r << 2); TPU_W_DATA4 = 0; }
+    TPU_CTRL = 0x10;
+    TPU_X_IN = 0;
+    __asm__ volatile("fence" ::: "memory");
+    TPU_CTRL = 0x01;
+    while (!(TPU_STATUS & 1)) { }
+    TPU_CTRL = 0x10;
+}
 
 // array_macc() over the XBUS: load 4 INT8 weight rows, run one matmul, read the
 // signed INT32 accumulators RES0-3. Bound by m7_kernel.h's forward path.
 static void array_macc_impl(const signed char Wi[4][4], const signed char xi[4], int32_t acc[4]) {
+    hw_flush();            // scrub residual pipeline/psum state before this matmul
     for (int r = 0; r < 4; r++) {
         TPU_W_ADDR  = (uint32_t)(r << 2);
         TPU_W_DATA4 = ((uint32_t)(uint8_t)Wi[r][3] << 24) | ((uint32_t)(uint8_t)Wi[r][2] << 16) |
@@ -57,6 +77,7 @@ static void array_macc_impl(const signed char Wi[4][4], const signed char xi[4],
     TPU_CTRL = 0x10;        // clear accumulators (and done)
     TPU_X_IN = ((uint32_t)(uint8_t)xi[3] << 24) | ((uint32_t)(uint8_t)xi[2] << 16) |
                ((uint32_t)(uint8_t)xi[1] <<  8) |  (uint32_t)(uint8_t)xi[0];
+    __asm__ volatile("fence" ::: "memory");   // ensure weights+X land before trigger
     TPU_CTRL = 0x01;        // start matmul; STATUS.done fires when acc is ready
     while (!(TPU_STATUS & 1)) { }
     for (int i = 0; i < 4; i++) acc[i] = (int32_t)TPU_RES(i);
@@ -98,6 +119,25 @@ int main(void) {
 
     i64 W1[4][4], W2[4][4], b1[4], b2[4];
     m7_init(W1, b1, W2, b2);
+
+    // M7.1 post-config SETTLE (required for correct training). Finding from the
+    // on-board settle diagnostic: isolated array_macc reads back correct even early
+    // after `fpga loadb`, yet training that starts immediately diverges from ep0
+    // with deterministic garbage — the first SGD step lands on a bad matmul, corrupts
+    // the Q8.8 master weights, and never recovers. The cure is WALL-CLOCK TIME, not
+    // warm-up count: 256 back-to-back maccs (<10 ms) still diverged (XOR 2/4), while
+    // the same/fewer maccs spread over ~130 s converged bit-exact to the oracle.
+    // Converge-with-delay vs diverge-without was 2/2 vs 5/5 across rebuilds — not a
+    // P&R lottery. So wait ~45 s (and run a few warm-up maccs, mirroring the configs
+    // that worked) before the first training step. Underlying post-config mechanism
+    // (FCLK0/PLL settling, config-time rail droop, or DFX decoupling) is still open.
+    {
+        const signed char Ww[4][4] = {{1,1,1,1},{1,2,3,4},{2,2,2,2},{1,0,1,0}};
+        const signed char Xw[4]    = {2,3,4,5};
+        int32_t accw[4];
+        for (int w = 0; w < 16; w++) array_macc(Ww, Xw, accw);
+        for (volatile uint32_t d = 0; d < M7_SETTLE_ITERS; d++) { }   // ~45 s settle
+    }
 
     neorv32_uart0_printf("training %d epochs (loss -> mailbox)...\n", M7_EPOCHS);
     i64 sse = 0;
