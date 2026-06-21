@@ -227,7 +227,7 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 - **Evidence**: `md 0x41200000` transition RoT-marker → inference result; `dbg_leds` change on
   swap; PS + NEORV32 UART heartbeat uninterrupted across the `loadbp`; rejected-partial log.
 
-### M6.4 (stretch, Model B) — RP-resident RoT module  🔧 BUILT + HOST-WIRED (2026-06-21), on-board verify PENDING
+### M6.4 (stretch, Model B) — RP-resident RoT module  ✅ DONE & HW-VERIFIED (2026-06-21)
 - Add `rtl/dfx/tpu_rp_rm_rot.v` (boot-time measurement/attestation engine on the `tpu_rp`
   interface) and `config_rot`; sequence RP `rm_rot` → measure → `loadbp` `rm_tpuvpu`,
   reclaiming the RP area.
@@ -248,9 +248,15 @@ the fabric (exactly the M5 negative case, reused). The RoT authorizes its succes
 > - `scripts/boot-sequence.sh --model-b`: boots `static_full_rot` (RP up as RoT → `0x600DB007`),
 >   measured-gate, then `loadbp rm_tpuvpu` (→ `0x1019391F`). `--dry-run` passes the gate for both models.
 >
-> **PENDING (on-board, needs board powered at miner U-Boot):** run `boot-sequence.sh --model-b` and
-> confirm `md 0x41200000` shows **`0x600DB007` (RoT) → `0x1019391F` (TPU+VPU)** across the live
-> `loadbp` with PS/NEORV32 heartbeat uninterrupted, and `dbg_leds` 0110 → tpu pattern.
+> **On-board (EBAZ4205, miner U-Boot, 2026-06-21) — `scripts/boot-sequence.sh --model-b`:**
+> - `fpga loadb static_full_rot` (`design filename = dfx_top … date 2026/06/20 21:52:36`) →
+>   `md 0x41200000` = **`0x600DB007`** — the RP itself comes up as the boot-time RoT marker.
+> - 3× heartbeat poll all read `600db007` — RoT alive & stable; measured-gate `c9b56747…` OK.
+> - `fpga loadbp rm_tpuvpu` (`PARTIAL=TRUE`) = **live RP swap, no PS reset** → `md 0x41200000`
+>   = **`0x1019391F`** (the M6.3 TPU+VPU inference result), gate `a69b63bf…` OK.
+> - The `0x600DB007` (RoT) → `0x1019391F` (TPU+VPU) transition across a single live `loadbp` is
+>   the M6.4 "measure-then-yield": the RP attests at boot, then yields the same fabric to inference.
+> - Log: `/tmp/m64-bootseq.log` (host). Same static as M6.3 (pr_verify-compatible), so no static reload.
 
 ### M6.5 (optional) — LUT-KCM weights via ICAP live-edit ("weights = reconfigurable identity")
 This is the milestone where the project's ICAP/LUT live-edit work (M4/T2.2/T2.3) finally earns a
