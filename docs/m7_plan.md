@@ -217,8 +217,38 @@ starts compute immediately after `fpga loadb`.
 
 #### ⚠️ OPEN: multi-epoch training diverges on `rm_train` — a build-dependent post-config array instability
 The single-epoch result is correct, but the full multi-epoch loop **diverges** on hardware (loss
-collapses to ~0 by ep20 instead of following the oracle 469→…→277). Diagnosed (diag3) to a **post-config
-instability of the array in the `rm_train` bitstream**, NOT a logic bug:
+collapses to ~0 by ep20 instead of following the oracle 469→…→277).
+
+> **UPDATE (2026-06-22) — TIMING DEFINITIVELY RULED OUT; root cause is a firmware-binary-sensitive
+> CPU↔array access-timing interaction (a latent array handshake race), NOT timing closure or routing.**
+> A 3-build verification settled it: the failing diag3 was re-place/routed two ways — RM-only (impl_8,
+> `verify_reroute.tcl`) and full static (impl_1+impl_8, `static_reroute.tcl`), with timing-driven
+> directives (ExtraTimingOpt + AggressiveExplore + phys_opt). **WNS improved 0.103 → 0.334 → 0.567 ns
+> (5× range), WHS 0.024 → 0.041 ns, recovery/removal all MET — yet every build produced BIT-IDENTICAL
+> wrong forward `{-5,-3,-8,-3}` and identical divergence.** A timing/routing marginality would give
+> *different* failures per route, not identical ones across a 5× margin spread. Furthermore the forward
+> **source AND compiled machine code** are byte-identical between the working diag2 and the failing
+> diag3 (`objdump` diff of m7_forward/m7_matmul/array_macc/hw_flush = identical) — so the only remaining
+> variable is the firmware **binary context** (diag3 has more surrounding code). Working hypothesis: the
+> larger diag3 image shifts instruction addresses → different NEORV32 **icache** hit/evict pattern during
+> the forward → the `array_macc` XBUS access sequence (notably the W_DATA4 bulk-load FSM that stalls the
+> bus 3 cycles, vs the CTRL=0x01 compute-start, vs the STATUS.done/RES read) lands at different relative
+> cycles → exposes a **latent race/fragility in the wb_tpu_accel handshake** → wrong RES → wrong forward.
+> This matches the M7.1 "direct array_macc correct but kernel forward returns garbage" symptom (the
+> wall-clock settle papered over it there; here on rm_train it surfaces and settle does not help). **So
+> the next-session fix target is the array access protocol / icache, NOT clock↓ (which timing-ruled-out
+> makes irrelevant).** Verification tooling kept: `vivado/dfx/{verify_reroute,static_reroute}.tcl`.
+>
+> **Redirected next-session plan:** (1) rebuild diag2's exact firmware → confirm reproducibly correct
+> (isolate "binary context" as the variable); (2) bisect diag2→diag3 to find the code addition that flips
+> the forward (likely a size/layout threshold tripping the icache); (3) **key experiment** — disable the
+> NEORV32 icache and/or add explicit delays / extra STATUS polling / fences between the weight-load,
+> compute-start, and RES-read in `array_macc`; if any cures it, the access-timing race is confirmed;
+> (4) audit the `wb_tpu_accel`/`systolic_array_4x4` handshake for a window where fast back-to-back XBUS
+> accesses can start compute before the bulk weight-load drains or read RES before done.
+
+Earlier (now-superseded) diagnosis framing — a **post-config instability of the array in the `rm_train`
+bitstream**, NOT a logic bug:
 - The *identical* forward code that returns the oracle's `y[0]={19,2,10,-1}` in the **diag2** build
   returns wrong `{-5,-3,-8,-3}` in the **diag3** build — same RP netlist (`rm_train_synth_1` reused),
   different static (different firmware/IMEM → different full bitstream). So the array's post-config
