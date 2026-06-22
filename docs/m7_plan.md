@@ -193,12 +193,55 @@ starts compute immediately after `fpga loadb`.
   greps for (`until ! pgrep -f uboot-fpga-load`) **matches itself**, so the wait-loop never exits and the
   watcher hangs producing no output. Match a more specific pattern or use a PID file.
 
-### M7.2 — hardware loss / leaky' / weight-update units (the tiny-tpu trio)
+### M7.2 — hardware loss / leaky' / weight-update units (the tiny-tpu trio) — ⚠️ LOGIC DONE & hw-verified (single-epoch); multi-epoch blocked by a build-dependent post-config array instability (2026-06-22)
 - `rtl/train_unit.v`: MSE loss + `dL/dy`, leaky-ReLU derivative gate, and `grad_descent`
   (`W −= dW >>ₐ LR_SHIFT` on the master copy). Written from scratch to the math above; tiny-tpu
   `src/{loss,leaky_relu,gradient_descent}.sv` are the **reference only** (license caveat below).
-- Wire master-weight BRAM + the outer-product accumulation onto the array.
-- **Evidence**: full train step in hardware (firmware only sequences); loss curve matches M7.0.
+- **Scope decision (made):** trio + the 2-4-1 XOR master weights (17 Q8.8 vals, a register file)
+  in HW; the rank-1 outer products `δ⊗xᵀ` stay a 16-MAC NEORV32 sequence; the two matmuls stay on
+  the 4×4 array (M7.1); forward requant+bias+leaky stays SW (no M7.1 regression). The DFX RM is
+  `rtl/dfx/tpu_rp_rm_train.v` (array + train_unit, **no VPU** — the train↔infer time-mux counterpart
+  of `rm_tpuvpu`). Key impl note: `leaky'(z)` is a power-of-two slope, so `qmul(x, leaky'(z))` is a
+  rounding **shift**, not a multiply → train_unit needs only **1** DSP (the `err²` MSE term); total
+  17/20 in `pblock_rp`, fits with margin (the original 64×64 `qmul` blew DSP to 52; also narrowed the
+  clamp/loss datapath 64→32-bit to fit slices).
+- **Verified bit-exact in simulation:** `sim/tb_train.v` (train_unit vs the oracle golden, 64 samples:
+  LOSS + d2 + d1 + post-update master); `sim/tb_rm_train.v` (the wrapper bus path with a Wishbone
+  master); `sw/m7_train/train_xor_hw.c` (the whole HW/SW split, modelled, runs 4000 epochs bit-exact:
+  weight mism=0, loss-curve 0/4000, XOR 4/4, SSE=0). `oracle_train.py --dump-tu` emits the golden trace.
+- **Verified on the EBAZ4205 (diag2 firmware, results via the PS mailbox):** train_unit master
+  read/write ✓, `loss_d2` known-input → LOSS=256 ✓, leaky'+δ → D2=256 ✓, SGD-update → 999 ✓, array
+  forward RES=14 ✓, and a **real full epoch-0** (`m7_epoch_hw`, all of forward + loss + δ + update in
+  HW) → **loss = 469, bit-exact to the oracle**. So the trio, the forward, the update, and the master
+  all work correctly on real silicon for a single training step.
+
+#### ⚠️ OPEN: multi-epoch training diverges on `rm_train` — a build-dependent post-config array instability
+The single-epoch result is correct, but the full multi-epoch loop **diverges** on hardware (loss
+collapses to ~0 by ep20 instead of following the oracle 469→…→277). Diagnosed (diag3) to a **post-config
+instability of the array in the `rm_train` bitstream**, NOT a logic bug:
+- The *identical* forward code that returns the oracle's `y[0]={19,2,10,-1}` in the **diag2** build
+  returns wrong `{-5,-3,-8,-3}` in the **diag3** build — same RP netlist (`rm_train_synth_1` reused),
+  different static (different firmware/IMEM → different full bitstream). So the array's post-config
+  correctness is **build-dependent**.
+- It is **deterministic per build**: two independent re-`fpga loadb` of the same diag3 bitstream both
+  give the same wrong forward → not a per-load metastable lottery, but tied to the specific build.
+- It is **NOT cured by settle time**: diag3 ran two trajectories, a 3 s and a 15 s post-config settle,
+  and **both diverged identically**. (The M7.1 wall-clock-settle cure does not work here.)
+- It is **NOT a logic bug**: `tb_train` is bit-exact through 16 epochs, the host twin through 4000, and
+  diag2's single on-board epoch is exactly 469. A board divergence by ep20 with proven logic ⇒ a HW
+  effect.
+- This is the same *class* as the M7.1 "post-config settle" gremlin (root cause left open there —
+  FCLK0/PLL jitter, config-time rail droop, or DFX decoupling release), but worse on `rm_train` and not
+  time-curable. The `rm_train` RP swaps the VPU for `train_unit` (master register file + a DSP); its
+  routing/boundary context near the RP partition pins differs per static build, which plausibly tips a
+  marginal config-time transient. Candidate next steps (untried): `loadbp`-reconfigure the RP after the
+  full load; a more aggressive array re-init/clear before training; an explicit RP reset sequence in
+  `dfx_top`; or a hardware-side check (Type-C supply margin, scope FCLK0/PLL lock, XADC rail/temp).
+- **Diagnostic tooling kept** for the follow-up: `sw/m7_train/diag.c` (train_unit probe), `diag2.c`
+  (forward + update + real-epoch), `diag3.c` (multi-epoch trajectory, two settle lengths). Build with
+  `make APP_SRC=diag.c … install` then rebuild the static; results decode off mailbox `0x41200000`.
+- **Status:** M7.2 RTL/firmware/sim are complete and committed; the headline "full multi-epoch training
+  on `rm_train`, loss curve bit-exact" awaits resolving this hardware instability.
 
 ### M7.3 — DFX train↔infer split + measured-boot gate (the project-consistent headline + the LUT fix)
 - Package **two** DFX reconfigurable modules on the **same `tpu_rp` interface**:
