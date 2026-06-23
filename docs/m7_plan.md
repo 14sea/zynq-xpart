@@ -273,6 +273,68 @@ bitstream**, NOT a logic bug:
 - **Status:** M7.2 RTL/firmware/sim are complete and committed; the headline "full multi-epoch training
   on `rm_train`, loss curve bit-exact" awaits resolving this hardware instability.
 
+#### 🎯 ROOT-CAUSE CLASS FOUND (2026-06-23 session) — it is a binary-SIZE → bitstream-IMPLEMENTATION effect on the array, NOT firmware / icache / cadence / timing
+A focused session of on-board experiments (icache OFF throughout most; board stayed at live U-Boot the
+whole time — after `fpga loadb` the PS stays in U-Boot so each new build is just flush+`loadb`, no
+power-cycle) **eliminated every CPU/firmware-side hypothesis and proved the fault is purely a function of
+the firmware binary's SIZE, via the implemented bitstream**:
+
+1. **icache disable — NEGATIVE.** `neorv32_soc_dfx.vhd ICACHE_EN=>false`, rebuilt the full `main.c`
+   trainer → still diverges (ep0≈0, XOR 2/4). And `diag3`'s forward is **byte-identically wrong
+   `{-5,-3,-8,-3}` with icache ON *and* OFF**. ⇒ the d732268 "icache cadence" hypothesis is **wrong**;
+   icache is eliminated. (DFX rebuild measured ~4 min, not the ~30 min feared — synth_1+impl_1+impl_8
+   reusing the `rm_train` OOC synth.)
+2. **diag2 (SMALL binary, .text 4912 / .rodata 1348) — ALL CORRECT:** forward y[0]={19,2,10,-1} ✓,
+   train_unit SGD=999 ✓, **real epoch-0 loss = 469 BIT-EXACT** ✓. So the RTL (array + train_unit) and
+   the single-epoch path are perfect.
+3. **diag3 (LARGE binary, .text 5404 / .rodata 5348 ≈ main.c class) — forward WRONG `{-5,-3,-8,-3}`,**
+   epoch-0 loss 1, ep5/ep20→0; a 5× longer settle (run B) does NOT help. SGD=999 ✓. The wrong r0–3 are
+   the *isolated cold forward* (no training, no loop, runs first, byte-identical code to diag2 per
+   objdump) — so the bug is the array forward itself, build-dependent.
+4. **Firmware serialize array_macc — NEGATIVE.** Rewrote diag3's `array_macc`/`hw_flush` to fully
+   serialize every bus access (fence + dummy `TPU_STATUS` read [gated by `!bulk_active` → stalls past the
+   W_DATA4 bulk-load drain] + SPIN slack between phases) → forward STILL `{-5,-3,-8,-3}`. ⇒ the
+   handshake / access-cadence-race hypothesis is **also eliminated**. (Note: the W_DATA4 early-ACK window
+   is already covered by tpu_accel's `!bulk_active` write-gating — no lost writes — so the firmware-visible
+   protocol was robust all along.)
+5. **Memory overflow — RULED OUT (host-side):** `riscv64-...-size -A` on all three ELFs: .text+.rodata
+   ≪ 32 KB IMEM, .bss 256, stack ≪ 16 KB DMEM. No clobber.
+6. **🎯 INERT-PADDING — DECISIVE.** `sw/m7_train/diag2pad.c` = the WORKING diag2 + ~4.6 KB of pure dead
+   padding (`__attribute__((used)) const uint8_t PAD_RO[4400]` → .rodata + 3 dead `pad_fn*` → .text +
+   a `pad_consume()` called ONLY *after* r0–3 are computed, so it cannot touch them). Sizes pushed into
+   the failing class (.text 5180 / .rodata 5748). **The forward flipped from the correct {19,2,10,-1} to
+   the SAME {-5,-3,-8,-3} failure** (train_unit still 999). ⇒ **Pure inert binary growth — zero
+   forward-logic change — reproduces the bug.** It is a binary-size→bitstream-P&R effect.
+
+**Mechanism:** the `rm_train` OOC synth is reused, so the array **logic + DSP-pipeline inference is
+identical across builds**; the difference is purely impl-time **place+route** of that fixed netlist,
+driven by the larger static (a larger firmware grows IMEM ≈6.3 KB→2 RAMB36 vs ≈11 KB→3 RAMB36, perturbing
+the static placement/routing around the RP). A P&R-only change that flips function **with timing MET**
+(consistent with d732268's 5×-WNS-spread / identical-failure result) points to an **unconstrained /
+structural path** — a false/multicycle path, GSR/reset-release, or a static-side net rerouted through the
+RP region — not a setup/hold violation. The systolic **array** miscomputes (returns ~0 → small requant →
+{-5,-3,-8,-3}); **train_unit is always fine** (register file + 1 DSP, no cycle-aligned cascade).
+
+**Tried and FAILED as a fix:** `set_property CONTAIN_ROUTING true [get_pblocks pblock_rp]` — rebuilt
+main.c (routing succeeded, Unrouted=0) → still diverges identically. Likely because CONTAIN_ROUTING only
+keeps the RP's *own* routing inside the pblock; it does not keep *static* routing/feeds (the XBUS into the
+RP, or static nets crossing the region) out of the pblock area.
+
+**NEXT (un-run; decreasing confidence — do the diagnostic before more blind fixes):**
+- **(a) DCP DIFF (recommended diagnostic):** open the routed `impl_8` of a GOOD (diag2-size) vs BAD
+  (main/diag2pad-size) build, report on the systolic-array nets (16 PE psum/x cascades + DSP48
+  placement/cascade) to SEE exactly what shifts. No board; ~2 Vivado opens. This actually pins the
+  mechanism instead of guessing.
+- **(b) PIN THE ARRAY:** fixed LOC/DSP-site constraints (and/or lock a known-good RP route from the diag2
+  DCP) so the array place+route is identical regardless of static size; rebuild at main.c size → if it
+  converges, placement-sensitivity confirmed + fix in hand.
+- **(c) Pragmatic pivot:** diag2 single-epoch on `rm_train` is perfect, so M7.3 (rm_train↔rm_infer DFX +
+  gate) can be built on the verified single-step, documenting the full multi-epoch curve as a known issue.
+
+**Repro/tooling kept:** `sw/m7_train/diag2pad.c` (inert-padding repro), the diag2/diag3 mailbox-tag
+decoders (host scratchpad). All other experimental source (ICACHE=false, +CONTAIN_ROUTING, serialized
+diag3) was **reverted to the d732268 baseline** after the session.
+
 ### M7.3 — DFX train↔infer split + measured-boot gate (the project-consistent headline + the LUT fix)
 - Package **two** DFX reconfigurable modules on the **same `tpu_rp` interface**:
   `rtl/dfx/tpu_rp_rm_train.v` (array + training, no inference VPU) and the M6
