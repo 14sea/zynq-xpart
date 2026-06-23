@@ -2,6 +2,7 @@
 vivado/**/*.jou
 vivado/**/*.log
 vivado/**/*.str
+vivado/**/*.out
 vivado/**/.Xil/
 vivado/**/*.cache/
 vivado/**/*.hw/
