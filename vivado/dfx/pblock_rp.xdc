@@ -11,6 +11,11 @@ resize_pblock [get_pblocks pblock_rp] -add {RAMB18_X1Y0:RAMB18_X2Y19}
 resize_pblock [get_pblocks pblock_rp] -add {RAMB36_X1Y0:RAMB36_X2Y9}
 set_property RESET_AFTER_RECONFIG true [get_pblocks pblock_rp]
 set_property SNAPPING_MODE ON [get_pblocks pblock_rp]
+# NOTE (M7.2, 2026-06-25): CONTAIN_ROUTING was tested here and REVERTED — it contains
+# the RM routing but does NOT keep static (NEORV32) routing out of the RP region, so it
+# does not isolate the RM bitstream from firmware-size-driven static routing. See
+# docs/m7_2_dcpdiff.md §routing-isolation. Routing isolation is not achievable on this
+# 7-series part with standard knobs (only logic sites are reserved, not the routing).
 
 # Phase 4 (LUT-INIT surgery): disable bitstream CRC so a host-edited LUT INIT in
 # the partial bitstream still loads (no CRC recompute needed).

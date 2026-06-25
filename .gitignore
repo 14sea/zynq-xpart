@@ -46,3 +46,9 @@ vivado/*/ps_build/
 # points, never published — they live in their own upstream/sibling repos).
 rtl_src/
 sw_src/
+
+# M7.2 DCP-diff: bulky auto-generated pin constraints + Vivado DFX visual dir
+vivado/dfx/apply_array_pins.tcl
+vivado/dfx/apply_array_pins_loc.tcl
+vivado/dfx/apply_array_anchors.tcl
+hd_visual/
