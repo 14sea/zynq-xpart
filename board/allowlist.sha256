@@ -60,3 +60,6 @@ dfb7209be26f9572a73ad9e9148ce7520e9e0da9b6c06927851c82914af89952  partial-RM1-TP
 6b97e62eb7913214e83f8916c2b3777501761afce0315154d89d852bea1408e7  full-static+RM_TRAIN-M73yield
 3198d9667c55cc6d8b3e3ff882ba138f77cf27298f8417f0a426a5cba533fa40  partial-RM_TRAIN-M73yield
 0dd009c062ab9e7cc4e60b9725185e5aa87e924b0804aa7bd6dabedfe74d80e9  partial-RM_TPUVPU-M73yield
+# M7.3+ checkpoint-to-fabric: clean impl_7 static (tpu_vpu_firmware) + rm_lutkcm
+# baseline (PE[0][0]=1). The ICAP write edits PE[0][0]->45 live on THIS static.
+d0165b0a0f07c191081ff9ce36780c40fe9b72ec4effa7627fa86c05e72865d7  full-static+RM_LUTKCM-M73plus-baseline

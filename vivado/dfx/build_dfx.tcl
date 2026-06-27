@@ -115,6 +115,15 @@ add_files -norecurse -of_objects [get_reconfig_modules rm_train] \
     [list $root/rtl/dfx/tpu_rp_rm_train.v $root/rtl/train_unit.v \
           $root/rtl/wb_tpu_accel.v $root/rtl/tpu_accel.v \
           $root/rtl/systolic_array_4x4.v $root/rtl/pe.v]
+# M7.3+ checkpoint-to-fabric LOCATE variant: rm_lutkcm with PE[0][0] baked = 45
+# (learned W1[0][0] INT8) instead of 1. Uses lutkcm_array_w45.v (same module name,
+# own fileset) — `lut-surgery.py diff` of the cfg7 vs cfg9 partials reveals the CRAM
+# bits that move for 1->45 (bits 2,3,5), i.e. the frames the on-board ICAP write edits.
+create_reconfig_module -name rm_lutkcm_w45 -partition_def [get_partition_defs tpu_pd] -top tpu_rp
+add_files -norecurse -of_objects [get_reconfig_modules rm_lutkcm_w45] \
+    [list $root/rtl/dfx/tpu_rp_rm_lutkcm.v $root/rtl/vpu.v \
+          $root/rtl/dfx/wb_tpu_accel_kcm.v $root/rtl/dfx/tpu_accel_kcm.v \
+          $root/rtl/dfx/lutkcm_array_w45.v $root/rtl/dfx/lutkcm_pe.v]
 create_pr_configuration -name cfg1 -partitions [list $rp_cell:rm1_tpu]
 create_pr_configuration -name cfg2 -partitions [list $rp_cell:rm2_alt]
 create_pr_configuration -name cfg3 -partitions [list $rp_cell:rm_lut]
@@ -123,6 +132,7 @@ create_pr_configuration -name cfg5 -partitions [list $rp_cell:rm_tpuvpu]
 create_pr_configuration -name cfg6 -partitions [list $rp_cell:rm_rot]
 create_pr_configuration -name cfg7 -partitions [list $rp_cell:rm_lutkcm]
 create_pr_configuration -name cfg8 -partitions [list $rp_cell:rm_train]
+create_pr_configuration -name cfg9 -partitions [list $rp_cell:rm_lutkcm_w45]
 add_files -fileset constrs_1 -norecurse $origin/pblock_rp.xdc
 
 set_property PR_CONFIGURATION cfg1 [get_runs impl_1]
@@ -133,11 +143,16 @@ create_run impl_5 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]]
 create_run impl_6 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg6
 create_run impl_7 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg7
 create_run impl_8 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg8
+create_run impl_9 -parent_run impl_1 -flow [get_property FLOW [get_runs impl_1]] -pr_config cfg9
 
 # M6.1: by default build only the static (impl_1, the locked parent) + the new
 # TPU+VPU partial (impl_5). rm2/rm_lut/rm_lut_b are unchanged & already
 # hardware-verified; set build_all 1 to rebuild them too.
 set build_all 0
+# M7.3+ locate build: static (impl_1) + rm_lutkcm baseline (impl_7) + rm_lutkcm_w45
+# (impl_9). The two LUT-KCM partials share this run's static, so lut-surgery.py diff
+# of them is a clean controlled-diff for the PE[0][0] 1->45 weight bits.
+set build_m73plus 0
 
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
@@ -157,20 +172,33 @@ if {$build_all} {
   puts "=== impl_4 (cfg4 lut B): [get_property STATUS [get_runs impl_4]] ==="
 }
 
-launch_runs impl_5 -to_step write_bitstream -jobs 8
-wait_on_run impl_5
-puts "=== impl_5 (cfg5 tpu+vpu): [get_property STATUS [get_runs impl_5]] ==="
+if {!$build_m73plus} {
+  launch_runs impl_5 -to_step write_bitstream -jobs 8
+  wait_on_run impl_5
+  puts "=== impl_5 (cfg5 tpu+vpu): [get_property STATUS [get_runs impl_5]] ==="
 
-# M6.1 evidence: RP utilization (within pblock?) + DRC on the routed TPU+VPU.
-open_run impl_5
-report_utilization -file $bdir/impl5_util.rpt
-report_drc        -file $bdir/impl5_drc.rpt
-puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
+  # M6.1 evidence: RP utilization (within pblock?) + DRC on the routed TPU+VPU.
+  open_run impl_5
+  report_utilization -file $bdir/impl5_util.rpt
+  report_drc        -file $bdir/impl5_drc.rpt
+  puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
+}
+
+# M7.3+ locate build: static (impl_1) + rm_lutkcm baseline (impl_7) + rm_lutkcm_w45
+# (impl_9). Both share impl_1's static, so their partials are a clean controlled-diff.
+if {$build_m73plus} {
+  launch_runs impl_7 -to_step write_bitstream -jobs 8
+  wait_on_run impl_7
+  puts "=== impl_7 (cfg7 rm_lutkcm baseline PE00=1): [get_property STATUS [get_runs impl_7]] ==="
+  launch_runs impl_9 -to_step write_bitstream -jobs 8
+  wait_on_run impl_9
+  puts "=== impl_9 (cfg9 rm_lutkcm_w45 PE00=45): [get_property STATUS [get_runs impl_9]] ==="
+}
 
 # M7.2: TRAINING partial (rm_train). Built by default (the active milestone). Report
 # RP utilization + DRC — this is the real fit confirmation for the M7 LUT-pressure
 # concern (train_unit + array, no VPU; expect to sit comfortably in pblock_rp).
-set build_train 1
+set build_train [expr {!$build_m73plus}]
 if {$build_train} {
   launch_runs impl_8 -to_step write_bitstream -jobs 8
   wait_on_run impl_8

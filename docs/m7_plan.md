@@ -425,6 +425,46 @@ finding that array-correctness is a build-dependent in-context-routing lottery w
 correlated with IMEM size — here one informed re-roll sufficed. Allowlist carries the build-2
 hashes (`6b97e62e` full / `3198d966` rm_train / `0dd009c0` rm_tpuvpu); build 1 superseded.
 
+### M7.3+ — ICAP checkpoint-to-fabric + runtime attestation  ✅ DONE & HW-VERIFIED (2026-06-27)
+"The chip trains, then writes its learned weights into its own logic, live." After M7
+learns the XOR weights, **ICAP-bake a learned weight into the LUT-KCM inference fabric**
+(M6.5 `rm_lutkcm`: the 16 INT8 weights are `dont_touch` LUT6 INIT[0]s — the logic *is*
+the model) and attest the running fabric — reusing M4/M6.5/T2.2 ICAP with **zero new RP
+resource**. Single-tile `rm_lutkcm` is one 4×4 layer, so this checkpoints ONE learned
+weight end-to-end (the full 2-layer XOR can't fit one tile — the honest scope).
+
+**Locate (the clean controlled-diff).** A param-rebuilt w45 RM does NOT give a clean diff:
+changing the baked WEIGHT re-synths the KCM netlist → the whole RP re-places (≈147k bytes
+differ). The fix: edit the INIT in the **routed checkpoint**, not the RTL — `open_checkpoint
+impl_7/dfx_top_routed.dcp`, `set_property INIT 64'h1` on the PE[0][0] weight LUT6s for the
+bits that change (1→45 = set bits 2,3,5; `vivado/dfx/m73p_edit_init.tcl`), `write_bitstream`.
+Same placement, so the partial differs by **only the 3 INIT bits** (14 config bytes).
+prjxray `bitread -y` of baseline vs edited → the exact changed bits:
+`bit_004019a2_087_15/31` (bits 2,3) and `bit_00401a20_081_15` (bit 5) — 3 bits in 2 frames.
+
+**Write (live ICAP, no reset).** One `writeseq` **per frame**, each a complete
+sync..DESYNC 233-word envelope (`scripts/hwicap-build-frameseq.py`, == the M6.5.2 proven
+size). **Hard-won lesson: do NOT put two FAR-sets in one envelope** — the buffered frame
+mis-commits to the new FAR and corrupts the array (mailbox went all-saturated `0x7F7F7F7F`;
+cleared by a full `loadb`). Two separate writes are clean.
+
+**Evidence (live silicon, PS/NEORV32 never reset).** Board on the impl_7 LUT-KCM static
+(`tpu_vpu_firmware`, mailbox `0x1019391F` = PE[0][0]=1). devcfg `PCAP_PR`←0; ICAP healthy
+(SR=0x5, WFV=0x3f). `writeseq` frame 0x004019a2 then 0x00401a20 → PE[0][0] 1→45 (the learned
+`W1[0][0]` INT8) → mailbox **`0x1019391F` → `0x1019397F`**: only POST0 (lane 0) changed
+`0x1F→0x7F`, lanes 1–3 unchanged (`0x39/0x19/0x10`) = a SURGICAL single-weight edit
+(`result[0]` 14→102 = 45·2+1·3+1·4+1·5, VPU-requant saturates lane 0). **Reverse** ICAP-write
+the baseline frames → mailbox back to `0x1019391F` exactly = bidirectional, reversible.
+**Attestation**: ICAP `readreg` IDCODE `0x13722093` + STAT `0x46106ffd` (read path alive,
+config healthy) before/after — the register-level runtime attestation. (Full-frame CRAM
+readback is **not** reliable here — the HWICAP RF-FIFO can't hold a 202-word frame; the
+runtime check is register-level + the **functional** attestation that the mailbox reflects
+the written weight + the M5 complement: the edited fabric ≠ any allowlisted partial.)
+
+Artifacts: `rtl/dfx/lutkcm_array_w45.v` (locate variant), `vivado/dfx/m73p_edit_init.tcl`,
+`scripts/hwicap-build-frameseq.py`, `vivado/dfx/m65_icap/m73p_*.seq.bin` (the four proven
+write sequences: w45 + baseline, two frames each), build_dfx `build_m73plus` flag.
+
 ### M7.4 (stretch) — bigger workload
 - Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as
   reference), batched over multiple forward/backward passes. 4×4 array → tile/loop in firmware.
