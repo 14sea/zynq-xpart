@@ -1,0 +1,8 @@
+# NEORV32 / host build artifacts
+build/
+main.elf
+neorv32_exe.bin
+neorv32_raw_exe.bin
+neorv32_imem_image.vhd
+*.asm
+*.bin

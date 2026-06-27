@@ -335,7 +335,7 @@ RP, or static nets crossing the region) out of the pblock area.
 decoders (host scratchpad). All other experimental source (ICACHE=false, +CONTAIN_ROUTING, serialized
 diag3) was **reverted to the d732268 baseline** after the session.
 
-### M7.3 — DFX train↔infer split + measured-boot gate (the project-consistent headline + the LUT fix)
+### M7.3 — DFX train↔infer split + measured-boot gate  ✅ DONE & HW-VERIFIED (2026-06-27, Tier-1 + Tier-2)
 - Package **two** DFX reconfigurable modules on the **same `tpu_rp` interface**:
   `rtl/dfx/tpu_rp_rm_train.v` (array + training, no inference VPU) and the M6
   `rm_tpuvpu`/`rm_infer` (array + VPU, no train_unit). This is the **recommended structure** — it
