@@ -399,14 +399,31 @@ across every `loadbp` (no PS reset):
    wrong `-5` signature — which is irrelevant to the mechanism tier; Tier-2's correct-compute
    demo needs a clean rebuild.) Allowlist += `partial-RM1-TPU-m73static` (`dfb7209b…`).
 
-**Tier-2 NEXT — needs a clean DFX rebuild:** today's on-disk static is the bad-class/G3
-experimental build (array forward miscomputes). For the converged-seed single-step XOR-4/4
-demo, rebuild the standard DFX set (`build_dfx.tcl`: impl_1 static + impl_5 rm_tpuvpu +
-impl_8 rm_train, one consistent static) from the clean baseline, allowlist the exact partial
-hashes, then: seed rm_train master with `oracle_train.py` converged weights → 1 verified HW
-SGD step → publish master over mailbox → gated `loadbp` to rm_tpuvpu → infer XOR 4/4 on the
-handed-over weights. (Per M7.2, whether a given rebuild's array computes correctly is the
-documented build-dependent lottery — may need a rebuild or two to land a correct-route static.)
+**Tier-2 HW-VERIFIED on EBAZ4205 (2026-06-27) — the full path-(a) headline.** Firmware
+`sw/m7_train/m73_yield.c` (one static NEORV32 image, dual-phase), clean DFX rebuild
+`build_dfx.tcl` (impl_1 static + impl_5 rm_tpuvpu + impl_8 rm_train, one consistent static),
+host driver `scripts/m73-yield-demo.py`. Live run, PS/NEORV32 never reset:
+1. gated `loadb` full `6b97e62e…` (`full-static+RM_TRAIN-M73yield`) → Phase 1 on rm_train:
+   seed the train_unit master with the oracle's converged Q8.8 weights → ONE HW SGD step
+   (forward W·x + backward Wᵀ·δ on the array, trio in train_unit) → publish the learned
+   model. **Learned W2 row0 + b2 = `382 45 475 288 / -59` — BIT-EXACT to the oracle golden**
+   (the array's single step is verified on silicon). → READY_TO_YIELD.
+2. pre-yield inference on rm_train → **XOR 4/4** (preds 0110).
+3. gated `loadbp` swap rm_train→rm_tpuvpu (`0dd009c0…`, `partial-RM_TPUVPU-M73yield`) — the
+   measured yield. The learned weights live in static DMEM and survive the RP reconfig.
+4. post-yield inference on **rm_tpuvpu** → **XOR 4/4 sustained** (12/12 mailbox reads over 14 s),
+   PS `md` heartbeat responsive throughout. ⇒ train (1 verified step) → measured yield →
+   infer XOR 4/4 on the learned model, computed by the swapped-in RM, no PS reset.
+
+**The M7.2 build lottery, navigated (not solved).** Build 1 of this firmware came up
+*bad-class* (array forward garbage → the 1 SGD step saturated the master to `-32768`). Fix
+that landed a good-class route: **strip the dead `neorv32_uart0_printf`** (NEORV32 uart0 is
+not pinned out — printf was invisible AND bloated the IMEM; .text 7372→5988), which both
+shrinks the IMEM toward the M7.2 good-class size band *and* re-rolls the P&R route. Build 2
+(`m73_yield.c`, mailbox-only) is good-class and bit-exact. This is consistent with M7.2's
+finding that array-correctness is a build-dependent in-context-routing lottery weakly
+correlated with IMEM size — here one informed re-roll sufficed. Allowlist carries the build-2
+hashes (`6b97e62e` full / `3198d966` rm_train / `0dd009c0` rm_tpuvpu); build 1 superseded.
 
 ### M7.4 (stretch) — bigger workload
 - Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as

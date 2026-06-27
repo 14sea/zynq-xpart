@@ -153,19 +153,12 @@ static void pub(uint32_t w) { __asm__ volatile("fence" ::: "memory"); MBOX = w;
 static uint32_t tag24(uint32_t tag, i64 v) { return (tag << 24) | ((uint32_t)(int32_t)v & 0x00FFFFFFu); }
 
 int main(void) {
+    // NB: NEORV32 uart0 is NOT pinned out on this board (dfx_top.v) — all firmware
+    // status goes through the PS-visible mailbox 0x41200000, NOT printf. printf was
+    // therefore dead code AND bloated the IMEM (.text); per the M7.2 size-correlated
+    // build lottery (smaller IMEM => better odds of a correct-routing array), this
+    // image carries NO uart0/printf at all (mailbox-only).
     neorv32_rte_setup();
-    neorv32_uart0_setup(BAUD_RATE, 0);
-    neorv32_uart0_printf("\n=== M7.3 converged-seed single-step (train->yield->infer) ===\n");
-
-    // cold array self-check (T1: W·X expect 14,40,28,6) — flags a bad-class build early.
-    {
-        const signed char W[4][4] = {{1,1,1,1},{1,2,3,4},{2,2,2,2},{1,0,1,0}};
-        const signed char X[4] = {2,3,4,5};
-        int32_t acc[4];
-        array_macc(W, X, acc);
-        neorv32_uart0_printf("array self-check RES = %d %d %d %d (expect 14 40 28 6)\n",
-                             acc[0], acc[1], acc[2], acc[3]);
-    }
 
     // ── seed the working set AND the HW master with the CONVERGED weights ──
     i64 W1[4][4], b1[4], W2[4][4], b2[4];
@@ -185,17 +178,13 @@ int main(void) {
     // ── Phase 1: ONE verified HW SGD step on the converged master (loss stays ~0) ──
     tu_clr_loss();
     i64 sse = m7_epoch_hw(0, W1, b1, W2, b2);   // 4 samples = one online-SGD epoch
-    neorv32_uart0_printf("phase1 1-step SSE = %d (expect ~0, already converged)\n", (int32_t)sse);
-    neorv32_uart0_printf("learned W2r0 %d %d %d %d  b2 %d\n",
-                         (int32_t)W2[0][0], (int32_t)W2[0][1], (int32_t)W2[0][2],
-                         (int32_t)W2[0][3], (int32_t)b2[0]);
+    (void)sse;
 
     // publish the learned model (W2 row0 + b2) then READY_TO_YIELD.
     pub(tag24(0xC0, W2[0][0])); pub(tag24(0xC1, W2[0][1]));
     pub(tag24(0xC2, W2[0][2])); pub(tag24(0xC3, W2[0][3]));
     pub(tag24(0xC4, b2[0]));
     pub(M73_READY);
-    neorv32_uart0_printf("READY_TO_YIELD — host may now measured-loadbp swap to rm_tpuvpu\n");
 
     // ── Phase 2: continuous INFER loop on the carried-in-DMEM weights. The host runs a
     // MEASURED loadbp swap rm_train -> rm_tpuvpu at any time; the array is present in both

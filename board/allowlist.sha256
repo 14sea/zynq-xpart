@@ -51,3 +51,12 @@ c1c76febd99baadc71384b1b66ab4004f5acfc5f47cc55cc8268f59f994ac19e  partial-RM_TRA
 # survival on live silicon (2026-06-27). The bare M3 TPU RM (no train_unit/VPU); the
 # production inference RM (rm_tpuvpu) gets a matched-static rebuild in Tier-2.
 dfb7209be26f9572a73ad9e9148ce7520e9e0da9b6c06927851c82914af89952  partial-RM1-TPU-m73static
+# M7.3 Tier-2 (2026-06-27): clean DFX rebuild, one consistent impl_1 static carrying
+# the m73_yield.c dual-phase firmware (converged-seed single-step -> yield -> infer).
+# impl_8 = full static+rm_train (Phase 1) + its rm_train partial; impl_5 = rm_tpuvpu
+# partial (the yield target). All three share the impl_1 static, so loadbp-compatible.
+# (build 1 was bad-class: array forward garbage -> 1-step SGD saturated the master to
+# -32768; superseded. Build 2 strips the dead uart0/printf -> smaller IMEM, re-rolled route.)
+6b97e62eb7913214e83f8916c2b3777501761afce0315154d89d852bea1408e7  full-static+RM_TRAIN-M73yield
+3198d9667c55cc6d8b3e3ff882ba138f77cf27298f8417f0a426a5cba533fa40  partial-RM_TRAIN-M73yield
+0dd009c062ab9e7cc4e60b9725185e5aa87e924b0804aa7bd6dabedfe74d80e9  partial-RM_TPUVPU-M73yield
