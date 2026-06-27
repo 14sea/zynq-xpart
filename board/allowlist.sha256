@@ -38,3 +38,11 @@ b033284535b0c14fdf900926151fdebbe869b8a39d9a61e43db55ebca3ef8065  partial-RM_LUT
 # (Supersedes the M7.0b builds 2658438e / 76f2a46a, which did Wᵀ·δ in SW Q8.8.)
 ec6716c8006a97e8775ced297e77e2a563df5316fc4c021235ff6d3e80d7ce12  full-static+RM_TPUVPU-M7TRAIN
 eb776cc21953f4d1c43a7f517264a1927489dd27c9da56238231220a62ac8853  partial-RM_TPUVPU-M7TRAIN
+# M7.3 (2026-06-27): DFX train<->infer split + measured-boot gate, path (a) (verified
+# single-step). rm_train = HW train_unit trio + 4x4 INT8 array on the tpu_rp interface
+# (cfg8/impl_8). The M5 gate now authorizes BOTH the trainer (this hash) AND the
+# inference RM (partial-RM_TPUVPU above) so a loadbp swap between them is measured at
+# each step (M6.4 measure-then-yield). Single-step compute on rm_train is hw-verified
+# bit-exact (M7.2); live multi-epoch convergence on rm_train is the documented M7.2
+# 7-series-DFX in-context-routing limitation. Built from vivado/dfx build_dfx impl_8.
+c1c76febd99baadc71384b1b66ab4004f5acfc5f47cc55cc8268f59f994ac19e  partial-RM_TRAIN-trio

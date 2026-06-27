@@ -350,6 +350,39 @@ diag3) was **reverted to the d732268 baseline** after the session.
   PS/NEORV32 heartbeat uninterrupted across both `loadbp`s; tampered partial rejected (M5 negative
   case, reused).
 
+#### M7.3 status — DECISION (a) taken (2026-06-27)
+
+**Path decision (deferred from M7.2 close):** take **(a) — build the swap+gate on the
+verified single-step path**, NOT (b) hunt for a lucky-route multi-epoch bitstream. Rationale:
+M7.2 proved live multi-epoch convergence on `rm_train` is a build-dependent 7-series-DFX
+in-context-routing defect with no standard fix on XC7Z010; (b) is stochastic and unbounded.
+(a) demonstrates the *whole* M7.3 mechanism with every on-fabric compute step being one that
+M7.2 already proved bit-exact.
+
+**Honest headline under (a) — the "converged-seed single-step" demo:** since a single SGD
+step can't *reach* an XOR solution but *can* be made bit-exact, seed `rm_train`'s master with
+the **already-converged** weights from `sim/oracle_train.py` (host-known), run **one verified
+HW SGD step** on top (loss already ≈0, weights stay converged), publish the resulting Q8.8
+master over the PS mailbox `0x41200000`, `loadbp`-swap to `rm_infer`, feed it the handed-over
+weights, and show **XOR 4/4** on the *learned* weights. Every fabric op is single-shot/verified;
+the full live LOSS-decreasing curve is documented as the known M7.2 limitation, not claimed.
+
+**Two tiers, built bottom-up:**
+- **Tier 1 — MECHANISM (no firmware rebuild; uses already-built bitstreams).** measured-load
+  gates both RMs, `loadbp` swaps `rm_train ↔ rm_tpuvpu`, PS/NEORV32 heartbeat survives both,
+  tampered partial refused. Driver: `scripts/m73-demo.py`. Needs only the allowlist entry
+  (added 2026-06-27: `partial-RM_TRAIN-trio`, sha `c1c76feb…`, impl_8) + a board session.
+- **Tier 2 — WEIGHT HANDOFF (needs new firmware + one IMEM-rebake).** `rm_train` firmware:
+  seed converged master → 1 HW SGD step → publish master to mailbox → signal READY_TO_YIELD.
+  `rm_infer` firmware (from `sw/tpu_vpu_firmware`): read the handed-over weights instead of the
+  hardcoded `load_weights()`, run the XOR forward, publish XOR-score. Both IMEM images bake into
+  the static via Vivado, then re-hash into the allowlist.
+
+**Reused as-is:** M3 `loadbp`, M5 `measured-load.py` + allowlist, M6.4 measure-then-yield,
+`rm_train`(cfg8/impl_8) + `rm_tpuvpu`(m6_out) bitstreams, `m7-watch-loss.py`,
+`sim/oracle_train.py` (source of the converged seed). **New:** `scripts/m73-demo.py` (Tier 1,
+done); Tier-2 firmware variants + handoff (next board session).
+
 ### M7.4 (stretch) — bigger workload
 - Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as
   reference), batched over multiple forward/backward passes. 4×4 array → tile/loop in firmware.
