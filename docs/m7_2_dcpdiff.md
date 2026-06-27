@@ -1,3 +1,45 @@
+# M7.2 multi-epoch divergence — investigation summary (TL;DR)
+
+**Symptom:** the HW train_unit trio works for a single epoch, but multi-epoch training on
+`rm_train` diverges — the array forward returns ≈0 (`{-5,-3,-8,-3}`) instead of the oracle
+`{19,2,10,-1}`, deterministically per build.
+
+**Root cause (established):** a **build-dependent in-context-routing** effect on the XC7Z010
+(7-series) DFX flow. The RM (array) is re-place&routed in-context against a static whose
+footprint shifts with firmware size (IMEM 2→3 RAMB36); some routes compute correctly, some
+don't. Every build is **100 % timing-clean** (setup+hold MET, 0 unconstrained, fully routed,
+identical OOC netlist) yet some miscompute — i.e. a physical/routing reproducibility issue
+STA does not model. It is **stochastic per build**, not monotonic in size (a WORKING bad-size
+bitstream exists — see settle section).
+
+**Fixes attempted — ALL fail (this doc is the evidence):**
+| attempt | verdict |
+|---|---|
+| (a) DCP-diff good vs bad | only the whole array relocates; both timing-clean → not setup/hold |
+| (b.1) freeze DSP placement | built clean, **board still fails** → not the DSP placement |
+| (b.2) lock good RM route onto bad static | route conflicts (RM not isolated from static) |
+| bounded `CONTAIN_ROUTING` | RM contained but static still routes through RP → no fix |
+| (G2) freeze full RM placement + reroute | method-blocked (macros won't commit in bad static) |
+| (G3) floorplan NEORV32 off the RP | built clean, **board still fails** → static-thru-RP not the (sole) cause |
+| (G4) explicit array reset/clear | refuted by inspection (the clear already runs every compute) |
+| settle before forward | **refuted by a same-bitstream control** — the one "pass" was routing luck |
+
+**Baseline re-verified same-session/same-board:** the GOOD build computes `{19,2,10,-1}` +
+loss 469, so the board/load path is sound and the negatives are real.
+
+**Decision:** multi-epoch-correct `rm_train` is not achievable on this part by placement,
+routing-isolation, reset, or settle. **Pivot to M7.3 on the verified single-epoch path**;
+document multi-epoch-on-`rm_train` as a known 7-series-DFX in-context-routing limitation.
+
+**Best untested future lead:** DCP-diff a WORKING bad-size build (`diag2settle`) vs a FAILING
+bad-size build (`diag2pad`) at ~constant size to isolate the exact array net whose route flip
+breaks the compute — more targeted than the good-vs-bad diff below.
+
+**Methodological note:** single-build "fixes" are untrustworthy here because of routing
+variance; only same-bitstream pre/post controls are reliable (the settle false-positive proves it).
+
+---
+
 # M7.2 — DCP-diff diagnostic (option a): what shifts good vs bad
 
 Date: 2026-06-25. Goal: open the routed `impl_8` of a KNOWN-GOOD (diag2-size) build
@@ -128,3 +170,102 @@ its own pblock far from the RP so its routing never crosses the RP — a full st
 floorplan redesign, not pursued.)
 
 `pblock_rp.xdc` reverted to baseline (CONTAIN_ROUTING removed, note left in place).
+
+---
+
+# M7.2 — baseline re-confirmed on board, same session (2026-06-25, audit closure)
+
+Audit gap found and closed: the (b.1) DSP-pin negative result relied on "good = correct"
+from prior sessions; it was re-verified THIS session on THIS board to rule out a
+board/load-path fault.
+
+- RM netlist identical across good/bad builds: `rm_train_synth_1/tpu_rp.dcp` mtime is
+  2026-06-21 (untouched by any 2026-06-25 rebuild) — the OOC RM synth is genuinely reused,
+  so only impl-time P&R differs. (Confirms the (a) "identical netlist" premise.)
+- GOOD diag2 build (good_c, with CONTAIN_ROUTING) loaded via `fpga loadb`, mailbox
+  `md 0x41200000`: **B0..B3 = 19/2/10/−1 (forward CORRECT), B4 = 999 (train_unit SGD),
+  B5 = 469 (epoch-0 loss, bit-exact to oracle).**
+- Same board, same session, same load path that returned the DSP-pinned bad build's
+  −5/−3/−8 + collapsed loss. ⇒ board/load path is sound; baseline good=correct holds in
+  this build environment ⇒ the DSP-pin negative (b.1) is airtight: DSP placement is not the
+  cause. The full causal chain (good→correct, bad→wrong, pinned-bad→still-wrong) is now
+  verified end-to-end this session. No remaining material omissions; M7.2 closure stands.
+
+---
+
+# M7.2 — three deeper fix paths (2026-06-27): G2 / G3 / G4 all NEGATIVE
+
+Audit of the "infeasible" conclusion found 3 untested avenues; all three were pursued.
+
+## G2 — freeze the good RM placement, fresh route — METHOD-BLOCKED (suggestive negative)
+- Import good RM + reroute: blocked — the imported good-RM boundary cells expect partition
+  pins at GOOD locations; the bad static presents them elsewhere → boundary nets (e.g.
+  `xbus_adr[1]`) unroutable. (`read_checkpoint -cell` can't be rerouted across statics.)
+- Rebuild impl_8 with good placement as constraints: the full-cell / DSP+FF / DSP+CARRY4+FF
+  replays all fail in the bad-static context — "Failed to commit N macros / could not place
+  all shapes" (4 macros → 1 macro as more anchors added, never 0). The good placement's
+  macros (carry chains) **cannot be committed in the bad static** — itself evidence that the
+  placement is static-coupled, not independently freezable. The one freeze that DID build
+  (DSP-only) failed on board. ⇒ not a pure-placement issue that's independently freezable.
+
+## G3 — floorplan NEORV32 static off the RP — BUILT, BOARD-TESTED, NEGATIVE
+- Geometry: NEORV32 already sits in CLOCKREGION_X0Y0; RP is X1Y0 (adjacent). Confined
+  NEORV32 to the left column (CLOCKREGION_X0Y0:X0Y1) + CONTAIN_ROUTING so its internal
+  routing can't stray into the RP. Both impls built clean.
+- Verified: 0 static leaf cells in the RP region.
+- **On board (diag2pad + NEORV32-confined): forward B0..B3 = −5/−3/−8/−3 — STILL the bad
+  signature.** ⇒ "static NEORV32 routing through the RP" is NOT (or not solely) the
+  mechanism. Keeping static logic/routing out of the RP does not fix it.
+
+## G4 — explicit array reset/clear discipline — REFUTED BY INSPECTION
+- The array already has a firmware-writable clear (`CTRL[4]`, "reset acc+done"), and the
+  diag forward sequence ALREADY pulses it (`TPU_CTRL=0x10`) before and after every compute.
+  A config-time array reset is already happening, yet the divergence persists. The wrong
+  result is a datapath miscompute (RES≈0), not clearable stale FF state ⇒ a reset-discipline
+  fix cannot address it. (train_unit SGD=999 is correct in the bad build, so NEORV32
+  executes fine; the fault is specifically the array forward.)
+
+## Net
+All three deeper avenues fail — strengthening (not weakening) the closure: the divergence
+is a fundamental 7-series DFX **in-context-routing reproducibility** effect — the RM's fresh
+in-context route varies with firmware-size-driven static placement and yields a timing-clean
+but functionally-wrong array, and it is fixable by neither placement freeze, static routing
+isolation, nor reset discipline on this part. Confirmed pivot to M7.3 on the single-epoch path.
+
+Remaining untested lead (different category, not pursued here): a **placement-dependent
+post-config SETTLE before the forward** — the diag forward is computed at boot with no
+settle; the good build happens to be correct without it, the bad build may need a longer
+wall-clock settle (cf. the M7.1 settle gremlin). Worth a cheap test (add a multi-second
+delay before the forward, rebuild, reload) before fully closing.
+
+---
+
+# M7.2 — settle lead TESTED and REFUTED by a same-bitstream control (2026-06-27)
+
+The audit's remaining lead (placement-dependent post-config settle before the forward) was
+tested — first a single build, then a rigorous control.
+
+1. `diag2settle` (bad-class, .text 10996, baseline floorplan, a long settle + array warm-up
+   BEFORE the forward) → board forward = **{19,2,10,-1} CORRECT**, epoch loss 469. Looked
+   like settle was the cure (would overturn the closure).
+2. **Rigorous control `diag2ctrl`** (bad-class, .text 11952, SAME bitstream computes the
+   forward TWICE: immediately at boot = B0..B3, and again after the same long settle =
+   B4..B7) → **B0..B3 = −5/−3/−8/−3 AND B4..B7 = −5/−3/−8/−3 — BOTH WRONG.**
+
+⇒ On one and the same configured bitstream, a long wall-clock settle changes nothing. The
+`diag2settle` "correct" result was **build-to-build routing luck** (that particular build
+happened to get a working in-context route), NOT the settle. **The settle lead is refuted.**
+
+Implications:
+- The original closure stands and is strengthened: the divergence is a **build-dependent
+  in-context-routing** effect (timing-clean but functionally-wrong, varies per build);
+  settle, placement-freeze, routing-isolation, and reset-discipline all fail to fix it.
+- New nuance: `diag2settle` proves a WORKING bad-class bitstream EXISTS — so correctness is
+  NOT monotonic in firmware size; the in-context route is effectively stochastic per build
+  (some bad-class builds route the array correctly, some don't).
+- Methodological note: single-build "fixes" are unreliable here because of routing variance;
+  only same-bitstream controls (pre/post on one config) are trustworthy.
+
+Possible future lead (not pursued): DCP-diff a WORKING bad-class build (diag2settle) vs a
+FAILING bad-class build (diag2pad) — size held ~constant — to isolate the exact array net
+whose route flips correctness. More targeted than the good-vs-bad diff.

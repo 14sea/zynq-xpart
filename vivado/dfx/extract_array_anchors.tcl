@@ -6,7 +6,7 @@ set dcp [lindex $argv 0]; set out [lindex $argv 1]
 open_checkpoint $dcp
 set fp [open $out w]
 puts $fp "# Frozen array ANCHORS (DSP + FF) from the known-good diag2 build."
-set cells [get_cells -hier -quiet -filter {(NAME =~ *sa_inst/pe_?_?* || NAME =~ *u_tu/*) && IS_PRIMITIVE && (REF_NAME =~ DSP48* || REF_NAME =~ FD*) && LOC != ""}]
+set cells [get_cells -hier -quiet -filter {(NAME =~ *sa_inst/pe_?_?* || NAME =~ *u_tu/*) && IS_PRIMITIVE && (REF_NAME =~ DSP48* || REF_NAME =~ FD* || REF_NAME =~ CARRY*) && LOC != ""}]
 set n 0
 foreach c [lsort $cells] {
     set loc [get_property -quiet LOC $c]; set bel [get_property -quiet BEL $c]

@@ -52,3 +52,9 @@ vivado/dfx/apply_array_pins.tcl
 vivado/dfx/apply_array_pins_loc.tcl
 vivado/dfx/apply_array_anchors.tcl
 hd_visual/
+
+# Vivado working logs at repo root (from running vivado in repo dir)
+/vivado.log
+/vivado_*.backup.log
+/vivado*.jou
+/vivado_*.backup.jou

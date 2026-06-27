@@ -7,7 +7,7 @@
 set origin [file normalize [file dirname [info script]]]
 open_project $origin/build/dfx.xpr
 reset_run impl_8
-set_property STEPS.PLACE_DESIGN.TCL.PRE $origin/apply_dsp_only.tcl [get_runs impl_8]
+set_property STEPS.PLACE_DESIGN.TCL.PRE $origin/apply_array_anchors.tcl [get_runs impl_8]
 launch_runs impl_8 -to_step write_bitstream -jobs 8
 wait_on_run impl_8
 puts "=== impl_8 (pinned): [get_property STATUS [get_runs impl_8]] ==="
