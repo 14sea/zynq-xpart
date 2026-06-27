@@ -46,3 +46,8 @@ eb776cc21953f4d1c43a7f517264a1927489dd27c9da56238231220a62ac8853  partial-RM_TPU
 # bit-exact (M7.2); live multi-epoch convergence on rm_train is the documented M7.2
 # 7-series-DFX in-context-routing limitation. Built from vivado/dfx build_dfx impl_8.
 c1c76febd99baadc71384b1b66ab4004f5acfc5f47cc55cc8268f59f994ac19e  partial-RM_TRAIN-trio
+# M7.3 Tier-1 swap target: today's rm1_tpu partial (same impl_1 static as the trainer
+# above, so loadbp-compatible) — used to prove a genuine measured RM swap + heartbeat
+# survival on live silicon (2026-06-27). The bare M3 TPU RM (no train_unit/VPU); the
+# production inference RM (rm_tpuvpu) gets a matched-static rebuild in Tier-2.
+dfb7209be26f9572a73ad9e9148ce7520e9e0da9b6c06927851c82914af89952  partial-RM1-TPU-m73static

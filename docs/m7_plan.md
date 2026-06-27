@@ -383,6 +383,31 @@ the full live LOSS-decreasing curve is documented as the known M7.2 limitation, 
 `sim/oracle_train.py` (source of the converged seed). **New:** `scripts/m73-demo.py` (Tier 1,
 done); Tier-2 firmware variants + handoff (next board session).
 
+**Tier-1 HW-VERIFIED on EBAZ4205 (2026-06-27).** Live-silicon run, board stayed in U-Boot
+across every `loadbp` (no PS reset):
+1. `fpga loadb` today's `impl_8/dfx_top.bit` (full static + rm_train, built 13:21) →
+   PS in U-Boot, mailbox `0x41200000` publishes `b0fffffb` → RP alive.
+2. `measured-load` rm_train partial (`c1c76feb…`) → gate **PASS** (`partial-RM_TRAIN-trio`)
+   → `loadbp` → RP alive.
+3. NEGATIVE: 1-bit-flipped rm_train partial (`18579378…`) → gate **REJECT**
+   ("Refusing to load an unmeasured/tampered bitstream") → fabric never touched.
+4. `measured-load` today's rm1_tpu partial (`dfb7209b…`, same impl_1 static, loadbp-compatible)
+   → gate **PASS** → `loadbp` **SWAP** rm_train→rm1_tpu → mailbox tags advanced
+   `b0→b2→b3→b5` = static NEORV32 **heartbeat survived** the RM swap. Reverse swap back to
+   rm_train also gated+OK. ⇒ the M5 gate + DFX measured-swap + heartbeat machinery is proven
+   on hardware. (NOTE: today's impl_8 is a M7.2 *bad-class* build — its cold forward is the
+   wrong `-5` signature — which is irrelevant to the mechanism tier; Tier-2's correct-compute
+   demo needs a clean rebuild.) Allowlist += `partial-RM1-TPU-m73static` (`dfb7209b…`).
+
+**Tier-2 NEXT — needs a clean DFX rebuild:** today's on-disk static is the bad-class/G3
+experimental build (array forward miscomputes). For the converged-seed single-step XOR-4/4
+demo, rebuild the standard DFX set (`build_dfx.tcl`: impl_1 static + impl_5 rm_tpuvpu +
+impl_8 rm_train, one consistent static) from the clean baseline, allowlist the exact partial
+hashes, then: seed rm_train master with `oracle_train.py` converged weights → 1 verified HW
+SGD step → publish master over mailbox → gated `loadbp` to rm_tpuvpu → infer XOR 4/4 on the
+handed-over weights. (Per M7.2, whether a given rebuild's array computes correctly is the
+documented build-dependent lottery — may need a rebuild or two to land a correct-route static.)
+
 ### M7.4 (stretch) — bigger workload
 - Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as
   reference), batched over multiple forward/backward passes. 4×4 array → tile/loop in firmware.
