@@ -6,10 +6,22 @@ CFLAGS  ?= -O2 -Wall -Wextra -std=c99
 ORACLE   = ../../sim/oracle_train.py
 HEADER   = m7_vectors.h
 
-.PHONY: check check-hw header tu-golden clean
+MNIST_ORACLE = ../../sim/oracle_mnist.py
+MNIST_HEADER = m7_mnist_vectors.h
+
+.PHONY: check check-hw mnist mnist-header header tu-golden clean
 check: $(HEADER) train_xor.c
 	$(CC) $(CFLAGS) -o /tmp/train_xor train_xor.c
 	/tmp/train_xor
+
+# M7.4: bit-exact check the MNIST-tile kernel vs the numpy oracle.
+mnist: $(MNIST_HEADER) mnist_host.c m7_mnist_kernel.h
+	$(CC) $(CFLAGS) -o /tmp/mnist_host mnist_host.c
+	/tmp/mnist_host
+
+# Regenerate the MNIST golden header from the oracle.
+mnist-header:
+	python3 $(MNIST_ORACLE) --dump-header $(MNIST_HEADER)
 
 # M7.2: validate the HW-trio split (train_unit modelled in C) bit-exact vs the oracle.
 check-hw: $(HEADER) train_xor_hw.c m7_kernel_hw.h

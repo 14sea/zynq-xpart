@@ -466,9 +466,41 @@ Artifacts: `rtl/dfx/lutkcm_array_w45.v` (locate variant), `vivado/dfx/m73p_edit_
 write sequences: w45 + baseline, two frames each), build_dfx `build_m73plus` flag.
 
 ### M7.4 (stretch) — bigger workload
-- Train a small **MNIST tile** classifier (reuse the M2 MNIST vectors / tiny-tpu's MNIST demo as
-  reference), batched over multiple forward/backward passes. 4×4 array → tile/loop in firmware.
+- Train a small **MNIST tile** classifier, multiple forward/backward passes. 4×4 array → tile/loop
+  in firmware.
 - **Evidence**: on-board accuracy climbing across epochs on a held-out tile; matches numpy oracle.
+
+**Design locked (host convergence sweep, 2026-06-27).** Net **64(=8×8) → hidden 8 → 4** (digits
+0–3); MSE on one-hot targets, leaky ReLU. Built on the **M7.1 path** (forward W·x AND backward Wᵀ·δ
+both on the INT8 4×4 array via transpose-load, NEORV32 SW does loss/δ/outer-product/update) — NOT
+the M7.2 `rm_train` HW-trio (its multi-epoch is the known 7-series-DFX in-context-routing break).
+
+Key decisions from the sweep:
+- **Mini/full batch is the enabler.** Per-sample SGD is *dead* in fixed point (single-sample
+  `dW >> LR_SHIFT` underflows to 0 → stuck at chance 25%). **Full-batch GD** (accumulate all 128
+  grads in INT32, one saturating master update/epoch: `W -= (ΣdW·LR_MUL) >> LR_SHIFT`) gives a
+  smooth *monotonic* climb (last-10 test-acc std 0.000) and the simplest firmware (no shuffle, no
+  baked order).
+- **INT8 quant costs ~nothing** at full batch: forward+backward `int8`==`q88` to the bit in the
+  sweep, so the whole matmul path stays on the fabric.
+- **Per-layer activation scale.** Inputs stored 6-bit (`x_q88 = xi8<<2`, XSHIFT=2); the hidden
+  layer spans a wider range so its INT8 view needs a bigger downshift (**XSHIFT_H=3**) to avoid
+  saturating at 127 — this alone lifted the honest INT8 ceiling from ~80% to ~92%.
+- Config: `K=2, WSHIFT=DSHIFT=2, XSHIFT=2, XSHIFT_H=3, LR_SHIFT=9, LR_MUL=1, seed=3, 60 epochs,
+  train=128/test=40`. Dataset = MNIST 0–3 area-pooled 28×28→8×8, host-seeded subset baked into the
+  header (~12 KB const, fits NEORV32 IMEM 32 KB).
+
+**HOST DONE & bit-exact (2026-06-27).** `sim/oracle_mnist.py` (numpy fixed-point oracle, models the
+array faithfully) trains test-acc **25% → 90% (peak 92.5%)**, SSE monotonic 33064→8136. The shared
+kernel `sw/m7_train/m7_mnist_kernel.h` (tiled 4×4 matmul; `array_macc` the only HW call) + host twin
+`mnist_host.c` reproduce it **bit-exact**: weight mism 0, loss 0/60, acc 0/60. `data/mnist/` fetched
+via `scripts/fetch-mnist.sh` (OSSCI S3 mirror, gitignored); golden header committed so the build
+needs no re-download. Run: `make -C sw/m7_train -f Makefile.host mnist`.
+
+**NEXT (on-board):** NEORV32 firmware (`main_mnist.c`) = XBUS `array_macc` + `m7_mnist_kernel.h`,
+stream per-epoch (SSE, test-acc) over the PS mailbox (extend `scripts/m7-watch-loss.py`); bake into
+the `rm_tpuvpu` static IMEM via a DFX build (build_dfx.tcl), `fpga loadb`, watch accuracy climb live
+and bit-exact vs oracle. Per the M7.1 finding, include the ~10 s post-config settle before compute.
 
 ## Resource sizing (does it still fit the RP pblock?)
 

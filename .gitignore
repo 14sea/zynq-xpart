@@ -58,3 +58,6 @@ hd_visual/
 /vivado_*.backup.log
 /vivado*.jou
 /vivado_*.backup.jou
+
+# M7.4 raw MNIST idx files (47MB; downloaded from OSSCI S3 mirror, not vendored)
+/data/mnist/
