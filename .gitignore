@@ -61,3 +61,7 @@ hd_visual/
 
 # M7.4 raw MNIST idx files (47MB; downloaded from OSSCI S3 mirror, not vendored)
 /data/mnist/
+
+# Vivado batch console/journal logs
+vivado/**/*.console
+vivado/**/*.jou
