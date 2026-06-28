@@ -1,6 +1,7 @@
 # Phase 7 — M7: on-chip training (backprop) — the chip learns by itself
 
-> **STATUS: M7.0 + M7.1 DONE & hardware-verified (2026-06-21); M7.2–M7.4 planned.** Builds on M2
+> **STATUS: M7.0–M7.3+ DONE & hardware-verified; M7.4 host bit-exact, M7.4-tiny (16-4-2) HW-verified
+> on-board bit-exact (2026-06-28).** Builds on M2
 > (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU: bias / Leaky-ReLU / requant forward path),
 > M3 (live DFX hot-swap), and M5 (measured-boot gate). M7 is the first milestone that is **not**
 > pure inference: it closes the loop and runs the **backward pass + weight update on the board**, so
@@ -517,9 +518,38 @@ reporter + isolation tests) established, in order:
 in-context routing/behaviour shifts with firmware size, exactly the reproducibility limit M7.2
 documented and closed (cannot be pinned by placement/routing constraints on XC7Z010). The XOR
 trainers (small firmware) land in the "good" size band; the MNIST firmware (~6 KB baked dataset)
-keeps missing it. **M7.4 is HOST-VERIFIED (bit-exact, the substantive result)**; the on-board run is
-a build-lottery item (navigate by shrinking firmware toward the good band, per M7.3+) and is not
-pursued further here. Tooling/firmware committed for a future reroll.
+keeps missing it. The 64-8-4 MNIST on-board run is therefore left as a build-lottery item.
+
+#### M7.4-tiny — the on-board run, DONE & HW-VERIFIED (2026-06-28)
+
+Rather than keep rerolling the ~14 KB MNIST firmware, **step the net down** so the firmware lands back
+in the verified-good size band: **16(=4×4) → hidden 4 → 2 classes** (MNIST digits 0 vs 1, area-pooled
+28→4). This tiles onto the 4×4 array with no vertical tiling — L1 `W1[4][16]` = **4 horizontal passes**,
+L2 `W2[2][4]` one tile. Same kernel, same Q8.8/INT8 math, same M7.1 path; only the dimensions and the
+baked dataset (4× smaller: 16 vs 64 int8/sample) differ.
+
+- **Host (bit-exact).** `sim/oracle_tiny.py` (`--sweep-lr` picked `LR_SHIFT=7`: monotonic SSE
+  16066→1999, final test_acc 0.975 / peak 1.000). `tiny_host.c` reproduces it bit-exact (weight/loss/
+  acc mism 0/0/0). Run: `make -C sw/m7_train -f Makefile.host tiny`.
+- **Kernel fix.** `m7_mm`'s 4×4 tiling assumed every dim a multiple of 4 (true for 64-8-4). The tiny
+  net's `NOUT=2` made the backward transpose matmul read `W2` cols 2,3 and `di8[2,3]` out of bounds,
+  corrupting layer-1's gradient → now **zero-pads lanes beyond NR/NC** (a no-op for MNIST, regression
+  re-checked 0/0/0).
+- **Firmware.** `sw/m7_train/main_tiny.c` = `main_mnist.c` baking the tiny vectors. `.text` **8104 B**
+  vs MNIST 13908 B (~42% smaller) — between the XOR trainers' good band (~6 KB) and the bad MNIST.
+- **On-board (EBAZ4205, rm_tpuvpu via `fpga loadb`, PS left in U-Boot).** Built one DFX
+  (`build_dfx.tcl` impl_1 static + impl_5 rm_tpuvpu), loaded the full `dfx_top.bit`. The array landed
+  in the **good band on the first roll** — no miscompute, no reset. The full multi-epoch curve, read
+  per-epoch over the PS mailbox (`scripts/m7-watch-mnist.py --golden m7_tiny_vectors.h`), is
+  **bit-exact to the oracle**: SSE 16066→1999 monotonic, test acc climbing 50%→97.5% (peak 100%),
+  every sampled epoch SSE & ok-count == oracle, DONE = peak 40/40, final 39/40, SSE 1999
+  (mbox `0xa82707cf`). (The per-epoch dwell is chunked + re-published so the slow `md` poller samples
+  every epoch; ~13 s/epoch wall-clock.)
+
+⇒ **M7.4 is HW-VERIFIED on-board.** The substantive result (a real multi-epoch classifier trained on
+the fabric array, accuracy climbing across epochs, bit-exact to the host oracle) runs on silicon once
+the firmware is sized into the good band — the M7.3+ "navigate by shrinking firmware" strategy, which
+here needed **zero** rerolls. The 64-8-4 MNIST stays host-only (its size keeps missing the band).
 
 ## Resource sizing (does it still fit the RP pblock?)
 

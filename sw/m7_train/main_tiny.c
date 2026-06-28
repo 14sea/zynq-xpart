@@ -42,7 +42,13 @@
 #define MB_CKPT(ep, cor, sse)  (((uint32_t)(ep) << 24) | ((uint32_t)(cor) << 16) | ((uint32_t)(sse) & 0xFFFF))
 #define MB_DONE(pk, fin, sse)  (0x80000000u | ((uint32_t)(pk) << 24) | ((uint32_t)(fin) << 16) | ((uint32_t)(sse) & 0xFFFF))
 
-#define M7_HOLD_ITERS   500000u      // brief per-epoch pause so the UART `md` poller samples
+// Per-epoch dwell so the slow U-Boot `md` poller can sample EVERY epoch (the
+// climb, not just the final DONE). Done as N_HOLD chunks of 1M that RE-PUBLISH
+// the checkpoint each chunk: (a) keeps the (epoch,acc,SSE) word visible for ~1s,
+// (b) avoids the single large busy-loop that hangs on some P&R builds (a 1M chunk
+// is well under the observed ~30M danger). 60 chunks ~= 1.2 s/epoch ~= 70 s total.
+#define M7_HOLD_CHUNK   1000000u
+#define M7_HOLD_N       60u
 
 #define M7_BOARD            // exclude the golden self-check arrays from the build
 #define M7M_VECTORS_H "m7_tiny_vectors.h"   // <-- the only difference vs main_mnist.c
@@ -134,8 +140,11 @@ int main(void) {
         sse = m7_epoch(W1, b1, W2, b2);
         cor = m7_test_correct(W1, b1, W2, b2);
         if (cor > peak) peak = cor;
-        MBOX = MB_CKPT(ep, cor, (uint32_t)sse);
-        for (volatile uint32_t d = 0; d < M7_HOLD_ITERS; d++) { }
+        uint32_t ck = MB_CKPT(ep, cor, (uint32_t)sse);
+        for (uint32_t c = 0; c < M7_HOLD_N; c++) {
+            MBOX = ck;   // re-publish so the md poller catches this epoch
+            for (volatile uint32_t d = 0; d < M7_HOLD_CHUNK; d++) { }
+        }
     }
 
     uint32_t done = MB_DONE(peak, cor, (uint32_t)sse);
