@@ -108,8 +108,11 @@ static void m7_init(i64 W1[M7M_NH][M7M_NIN], i64 b1[M7M_NH],
 // saturating master update: W -= (ΣdW * LR_MUL) >> LR_SHIFT.  Returns epoch SSE.
 static i64 m7_epoch(i64 W1[M7M_NH][M7M_NIN], i64 b1[M7M_NH],
                     i64 W2[M7M_NOUT][M7M_NH], i64 b2[M7M_NOUT]) {
-    i64 aW1[M7M_NH][M7M_NIN], ab1[M7M_NH];
-    i64 aW2[M7M_NOUT][M7M_NH], ab2[M7M_NOUT];
+    // static (not stack): the NH×NIN accumulator is 4 KB; on the NEORV32 board (16 KB
+    // DMEM) keeping it off the stack avoids piling it on main's master arrays. Single-
+    // threaded and re-zeroed every call below, so static is safe & bit-exact.
+    static i64 aW1[M7M_NH][M7M_NIN], ab1[M7M_NH];
+    static i64 aW2[M7M_NOUT][M7M_NH], ab2[M7M_NOUT];
     for (int i = 0; i < M7M_NH; i++) { ab1[i] = 0; for (int j = 0; j < M7M_NIN; j++) aW1[i][j] = 0; }
     for (int i = 0; i < M7M_NOUT; i++) { ab2[i] = 0; for (int j = 0; j < M7M_NH; j++) aW2[i][j] = 0; }
 

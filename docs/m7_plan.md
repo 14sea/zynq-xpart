@@ -497,10 +497,29 @@ kernel `sw/m7_train/m7_mnist_kernel.h` (tiled 4×4 matmul; `array_macc` the only
 via `scripts/fetch-mnist.sh` (OSSCI S3 mirror, gitignored); golden header committed so the build
 needs no re-download. Run: `make -C sw/m7_train -f Makefile.host mnist`.
 
-**NEXT (on-board):** NEORV32 firmware (`main_mnist.c`) = XBUS `array_macc` + `m7_mnist_kernel.h`,
-stream per-epoch (SSE, test-acc) over the PS mailbox (extend `scripts/m7-watch-loss.py`); bake into
-the `rm_tpuvpu` static IMEM via a DFX build (build_dfx.tcl), `fpga loadb`, watch accuracy climb live
-and bit-exact vs oracle. Per the M7.1 finding, include the ~10 s post-config settle before compute.
+**ON-BOARD (2026-06-28, EBAZ4205, rm_tpuvpu via `fpga loadb`): attempted, BLOCKED by the M7.2-class
+7-series-DFX limit; left as a build-lottery item.** Firmware `sw/m7_train/main_mnist.c` (XBUS
+`array_macc` + `m7_mnist_kernel.h`, per-epoch (epoch, test_correct, SSE) over the PS mailbox;
+decoder `scripts/m7-watch-mnist.py`) was baked into the `rm_tpuvpu` static IMEM and loaded across
+~9 DFX rebuilds. On-silicon instrumentation (staged mailbox heartbeats + a CPU-exception trap
+reporter + isolation tests) established, in order:
+- NEORV32 boots (50 MHz core), the chunked post-config settle runs (a single ~30M busy loop hung on
+  some builds — a codegen/placement quirk — so the settle was chunked with interleaved volatile MBOX
+  writes, which is reliable), `m7_init` completes.
+- the 4×4 array computes correctly: single MAC and a **200-MAC burst** both return the golden
+  `RES=14`; i64 math, `m7_forward` (tiled `m7_mm` + quant + TRAIN_X rodata read) and the transpose
+  matmul all pass in isolation.
+- but entering the heavy `m7_epoch` loop **resets** the CPU with **no caught exception** on the
+  build whose array was good; a later, smaller build's array instead **hung on the first MAC**.
+  DMEM was raised 16→32 KB to rule out stack overflow — it did not change the outcome.
+
+⇒ The 4×4 array's reliability is **build-dependent**: it sits in the reconfigurable partition and its
+in-context routing/behaviour shifts with firmware size, exactly the reproducibility limit M7.2
+documented and closed (cannot be pinned by placement/routing constraints on XC7Z010). The XOR
+trainers (small firmware) land in the "good" size band; the MNIST firmware (~6 KB baked dataset)
+keeps missing it. **M7.4 is HOST-VERIFIED (bit-exact, the substantive result)**; the on-board run is
+a build-lottery item (navigate by shrinking firmware toward the good band, per M7.3+) and is not
+pursued further here. Tooling/firmware committed for a future reroll.
 
 ## Resource sizing (does it still fit the RP pblock?)
 

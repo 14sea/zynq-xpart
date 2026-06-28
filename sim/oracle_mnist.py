@@ -39,7 +39,7 @@ DATA_DIR = "data/mnist"       # raw idx files (gitignored; OSSCI S3 mirror)
 # ---- locked hyperparameters ----
 CLASSES = (0, 1, 2, 3)
 NIN, NH, NOUT = 64, 8, 4
-NTRAIN, NTEST = 128, 40
+NTRAIN, NTEST = 64, 32
 EPOCHS = 60
 K = 2                         # leaky shift
 LR_SHIFT, LR_MUL = 9, 1       # full-batch lr = (ΣdW * LR_MUL) >> LR_SHIFT
@@ -274,8 +274,10 @@ def dump_header(path):
         f.write(f"static const long M7M_GOLD_LOSS[{EPOCHS}] = {{\n")
         f.write(",".join(str(v) for v in losses))
         f.write("\n};\n")
-        f.write(f"// golden per-epoch test accuracy x1000 (integer, for board compare)\n")
-        f.write(_arr1d_i("M7M_GOLD_ACC1000", np.round(np.array(accs) * 1000).astype(np.int64), "short"))
+        f.write(f"// golden per-epoch test accuracy x1000 — integer round-half-up from the\n")
+        f.write(f"// ok-count, IDENTICAL to mnist_host.c's (ok*1000 + NTEST/2)/NTEST.\n")
+        acc1000 = [(int(round(a * NTEST)) * 1000 + NTEST // 2) // NTEST for a in accs]
+        f.write(_arr1d_i("M7M_GOLD_ACC1000", np.array(acc1000, dtype=np.int64), "short"))
         f.write("#endif // !M7_BOARD\n\n#endif // M7_MNIST_VECTORS_H\n")
     print(f"wrote {path}")
 
