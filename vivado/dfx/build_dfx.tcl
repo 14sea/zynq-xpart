@@ -153,6 +153,10 @@ set build_all 0
 # (impl_9). The two LUT-KCM partials share this run's static, so lut-surgery.py diff
 # of them is a clean controlled-diff for the PE[0][0] 1->45 weight bits.
 set build_m73plus 0
+# M7.5.2 single-session loop: ONE impl_1 static (m752_loop.c firmware) + BOTH
+# impl_5 (rm_tpuvpu, phase-1 training) and impl_7 (rm_lutkcm, phase-2 infer),
+# so a live loadbp can swap rm_tpuvpu->rm_lutkcm under the running NEORV32.
+set build_m752 0
 
 launch_runs synth_1 -jobs 8
 wait_on_run synth_1
@@ -184,6 +188,14 @@ if {!$build_m73plus} {
   puts "=== impl_5 reports: $bdir/impl5_util.rpt , $bdir/impl5_drc.rpt ==="
 }
 
+# M7.5.2: also build impl_7 (rm_lutkcm) on the SAME impl_1 static, so rm_tpuvpu
+# (impl_5) <-> rm_lutkcm (impl_7) loadbp-swap live for the train->checkpoint->infer loop.
+if {$build_m752} {
+  launch_runs impl_7 -to_step write_bitstream -jobs 8
+  wait_on_run impl_7
+  puts "=== impl_7 (cfg7 rm_lutkcm, m752): [get_property STATUS [get_runs impl_7]] ==="
+}
+
 # M7.3+ locate build: static (impl_1) + rm_lutkcm baseline (impl_7) + rm_lutkcm_w45
 # (impl_9). Both share impl_1's static, so their partials are a clean controlled-diff.
 if {$build_m73plus} {
@@ -198,7 +210,7 @@ if {$build_m73plus} {
 # M7.2: TRAINING partial (rm_train). Built by default (the active milestone). Report
 # RP utilization + DRC — this is the real fit confirmation for the M7 LUT-pressure
 # concern (train_unit + array, no VPU; expect to sit comfortably in pblock_rp).
-set build_train [expr {!$build_m73plus}]
+set build_train [expr {!$build_m73plus && !$build_m752}]
 if {$build_train} {
   launch_runs impl_8 -to_step write_bitstream -jobs 8
   wait_on_run impl_8

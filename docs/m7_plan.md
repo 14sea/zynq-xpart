@@ -585,6 +585,42 @@ back to **`0x1019391F`** exactly = bidirectional, reversible. `PCAP_PR`←1 rest
 fabric, live, bit-exact and reversible, attested. (Single-tile `rm_lutkcm` holds one 4×4 layer — 16 of
 the 72-weight net; baking the whole 16-4-2 net needs a larger LUT-KCM fabric = the M7.5.3 stretch.)
 
+### M7.5.2 — single-session train → checkpoint-to-fabric → infer loop  ✅ DONE & HW-VERIFIED (2026-06-28)
+The full autonomous loop in ONE power-on session, **PS/NEORV32 never reset**: the chip trains a
+classifier, hands off its learned weights, reconfigures its own inference fabric, bakes those weights
+into its LUT logic via ICAP, and computes with them — then attests. Unifies M7.4-tiny (train),
+M7.3's dual-phase swap (m73_yield.c), and M7.5.1 (ICAP checkpoint) under ONE static.
+
+**Why it's tractable / honest.** M7.4-tiny training is deterministic (host-seeded, full-batch, no
+board RNG), so the converged tile is known a priori (= M7.5.1's) and the ICAP frames are
+precomputable. The honesty: the firmware publishes the board's ACTUAL trained tile over the mailbox
+and the host verifies it **== the oracle/the bytes being baked** BEFORE baking.
+
+**Pieces.**
+- `sw/m7_train/m752_loop.c`: ONE static firmware, `.text` 8048 B (good band). Phase 1 (rm_tpuvpu):
+  train the 16-4-2 net, publish a brief curve + the converged `W1[0:4][0:4]` INT8 view (16 values,
+  tags 0xE0..0xEF) + `READY` (0x600D0000). Phase 2 (rm_lutkcm, post-swap): VPU path (no weight load —
+  baked weights compute) publishing `{POST3..POST0}`.
+- `vivado/dfx/build_dfx.tcl` `build_m752` flag: build impl_1 (m752 static) + impl_5 (rm_tpuvpu) +
+  impl_7 (rm_lutkcm) — both RMs on the SAME static, so the loadbp swap is live.
+- `scripts/m752-watch.py`: fast-polls the mailbox through phase 1, decodes the curve + 16 tile
+  values + READY, verifies the board-trained tile == oracle.
+- ICAP frames regenerated from THIS build's impl_7 routed dcp (`m75_edit_tile.tcl` +
+  `m75-build-frameseqs.py`): **19 frames** this build (vs M7.5.1's 18 — P&R placement differs), all
+  self-checked.
+
+**Evidence (live silicon, one session, no reset).** ① loadb impl_5 (m752+rm_tpuvpu) → Phase 1 trains:
+curve SSE 16066→1999, test acc 20/40→39/40, then publishes the tile. ② host reads the 16 weights =
+`[3,11,16,12,2,2,-4,-3,2,13,13,15,-4,16,15,12]` = **oracle exactly** → READY → "safe to checkpoint".
+③ loadbp impl_7 rm_lutkcm partial (live RP swap under the running NEORV32) → mailbox `0x1019391F`
+(baseline baked weights, phase-2 VPU loop). ④ PCAP_PR←0, ICAP-bake the 19 trained frames →
+mailbox **`0x1019391F` → `0x7F7FE57F`** (bit-exact to the VPU model = the board's learned weights now
+compute in the LUT fabric). ⑤ attest IDCODE `0x13722093` + STAT `0x46106ffd`; PCAP_PR←1.
+
+⇒ M7.5.2 HW-VERIFIED: train → extract(+verify) → live DFX swap → ICAP checkpoint → infer → attest, end
+to end on the EBAZ4205 in a single session with no reset. (Still one tile = partial first layer; a
+whole-net hardwired classifier is M7.5.3.)
+
 ## Resource sizing (does it still fit the RP pblock?)
 
 The 4×4 INT8 forward array (16 DSP) is unchanged. Training adds, in the RP:
