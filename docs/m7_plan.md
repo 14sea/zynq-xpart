@@ -621,6 +621,47 @@ compute in the LUT fabric). ⑤ attest IDCODE `0x13722093` + STAT `0x46106ffd`; 
 to end on the EBAZ4205 in a single session with no reset. (Still one tile = partial first layer; a
 whole-net hardwired classifier is M7.5.3.)
 
+### M7.5.3-lite — WHOLE net classified on one folded LUT-KCM tile  ✅ DONE & HW-VERIFIED (2026-06-29)
+**Fit check first (why "lite").** A spatial whole-net LUT-KCM does NOT fit XC7Z010 — measured on the
+routed impl_7 dcp: **one 4×4 LUT-KCM tile = 3557 LUTs = 80.8% of the RP pblock's 4400** (each PE is a
+full editable 8×8 multiplier, ~180 LUTs; the weight can't be constant-folded or ICAP-editing it would
+do nothing). The 16-4-2 net's 72 PEs would need ~3× the whole chip. So **time-fold** instead: shrink
+the input to 2×2=4 px so L1 `W1[4][4]` and L2 `W2[2][4]` each = ONE tile, and run the forward as two
+array passes over the SAME tile, ICAP-baking it to the trained W1 then W2. Every weight of the 2-layer
+classifier is computed in hardwired, ICAP-editable LUT logic.
+
+**Pieces.** `sim/oracle_m753.py` (4-4-2, 2×2-pool MNIST 0/1, test_acc 92.5%) + `m753_vectors.h` (test
+set, biases, both INT8 tiles, golden classifications). `sw/m7_train/m753_infer.c` (.text 3.4 KB):
+two-phase batched inference — wait for L1 bake, compute all hidden acts, A_DONE, wait for L2 bake,
+classify, publish the 40-bit bitmap. `vivado/dfx/m753_edit_tile.tcl` (parameterised tile editor),
+`scripts/m753-demo.py` (host orchestrator), built via `build_dfx.tcl` `build_m73plus` (impl_1 m753
+static + impl_7 rm_lutkcm).
+
+**Closed-loop handshake (no host→board channel, no RTL change).** The board can't be told when a bake
+is done, and fixed-time windows are fragile (an early build deadlocked: `0xDEAD`). Instead the board
+**probes the tile with x={1,1,1,1} and waits until the raw RES equals that layer's row-sums**
+(L1→{-5,71,-7,-4}, L2→{30,18,0,0}; baseline→{4,10,8,2}, all distinct) — i.e. until the host's ICAP
+bake has landed; the host waits for the board's `A_DONE` before baking L2. The wait heartbeat carries
+an **incrementing low-16-bit counter** (`0x5A1Axxxx`/`0x5A2Axxxx`) so two reads prove the loop is live,
+not hung.
+
+**Two bugs found & fixed on silicon.**
+1. *L2 must be the L1→L2 diff, not baseline→L2.* The tile holds L1 when L2 is baked; a baseline→L2
+   frameseq leaves frames that L1 touched (but where L2==baseline) stuck at L1 → corrupt L1/L2 mix,
+   probe never matches. Fix: bake L2 = diff(L1_partial, L2_partial).
+2. *Bake before verifying ICAP.* `PCAP_PR`←0 then **verify `readreg 12`==`0x13722093`** before baking
+   (a suppressed-error bake into PCAP-owned config silently does nothing).
+
+**Evidence (live silicon, PS/NEORV32 never reset).** loadb impl_7 → board probes, waits. `PCAP_PR`←0,
+IDCODE healthy → ICAP-bake L1 (20 frames) → board detects, computes layer 1, `A_DONE` with hi8[0]
+spot-check `[1,6,0]` == oracle → ICAP-bake L1→L2 (19 frames) → board classifies all 40 test digits →
+mailbox **`0xB12DC5B8` / `0xB2002D3E` == golden bitmap exactly (40/40 == oracle, bit-exact)**.
+`PCAP_PR`←1. Fully automated end-to-end via `m753-demo.py` (PASS).
+
+⇒ M7.5.3-lite HW-VERIFIED: the whole 2-layer classifier's weights all pass through hardwired,
+ICAP-baked LUT logic, the layers time-folded onto a single tile, classifying a held-out test set
+bit-exact to the oracle — the spatial whole-net being a documented XC7Z010 fit limit.
+
 ## Resource sizing (does it still fit the RP pblock?)
 
 The 4×4 INT8 forward array (16 DSP) is unchanged. Training adds, in the RP:
