@@ -551,6 +551,40 @@ the fabric array, accuracy climbing across epochs, bit-exact to the host oracle)
 the firmware is sized into the good band — the M7.3+ "navigate by shrinking firmware" strategy, which
 here needed **zero** rerolls. The 64-8-4 MNIST stays host-only (its size keeps missing the band).
 
+### M7.5.1 — checkpoint the TRAINED tile into the LUT fabric via ICAP  ✅ DONE & HW-VERIFIED (2026-06-28)
+"The chip trains a classifier, then writes its learned weights into its own logic, live." Closes the
+M7.4-tiny → M7.3+ loop: take the FIRST 4×4 tile of M7.4-tiny's converged layer-1 weights — the INT8
+view of `W1[0:4][0:4]` = `[[3,11,16,12],[2,2,-4,-3],[2,13,13,15],[-4,16,15,12]]` — and ICAP-bake all
+16 into the `rm_lutkcm` PE array (each weight = 8 `dont_touch` LUT6 INIT[0]s), live, **no reset**.
+This scales M7.3+ from ONE synthetic-ish weight to a full tile of 16 genuinely-trained weights.
+
+**Tooling (generalises M7.3+).**
+- `sim/m75_predict.py`: derives the tile and predicts the on-board mailbox via the exact M6 VPU model
+  (bias → leaky `y = z>=0 ? z : z-(z>>>α)` → requant). Reproduces baseline `0x1019391F`; the trained
+  tile → **functional golden `0x7F7FE57F`** (POST=[127,-27,127,127]; lanes 0/2/3 saturate on the
+  larger trained weights, lane 1 = -27 is the non-saturated signed proof).
+- `vivado/dfx/m75_edit_tile.tcl`: sets all 16 PE weight-LUT6 INITs in the ROUTED impl_7 `rm_lutkcm`
+  dcp → clean controlled-diff partial (readback-verified 16/16).
+- `scripts/m75-build-frameseqs.py`: multi-frame generalisation of `hwicap-build-frameseq.py`. The
+  16-weight edit flips ~48 INIT bits across **18 config frames**; this anchors each frame in the RAW
+  config stream by the prjxray `(word,bit)` set (raw extraction keeps the real per-frame ECC; the
+  frame data appears twice in the partial, so an exact bit-level match pins the right copy), emits one
+  233-word sync..DESYNC envelope per frame (the one-FAR-per-envelope M7.3+ rule), self-checks each
+  frame's bit-diff == prjxray. 18/18 OK; reverse (restore-baseline) seqs too.
+
+**Evidence (live silicon, PS/NEORV32 never reset).** Board on impl_7 (rm_lutkcm baseline, rebuilt with
+`tpu_vpu_firmware` static); baseline mailbox `0x1019391F`. devcfg `PCAP_PR`←0 (`mw 0xF8007000
+0x4400e07f`); ICAP healthy (SR=0x5, WFV=0x3f), `readreg 12`=`0x13722093`. Stream the **18 forward
+frames** (`hwicap-uart.py writeseq`, SR=0x5 throughout — clean, no corruption) → mailbox
+**`0x1019391F` → `0x7F7FE57F`**, bit-exact to the corrected VPU model = the 16 trained weights now
+physically compute in the fabric. **Attestation**: `readreg 12`=`0x13722093` + `readreg 7` STAT
+=`0x46106ffd` (config healthy, read path alive). **Reverse**: stream the 18 baseline frames → mailbox
+back to **`0x1019391F`** exactly = bidirectional, reversible. `PCAP_PR`←1 restored.
+
+⇒ M7.5.1 HW-VERIFIED: a full tile of on-board-**trained** weights checkpointed into the running LUT
+fabric, live, bit-exact and reversible, attested. (Single-tile `rm_lutkcm` holds one 4×4 layer — 16 of
+the 72-weight net; baking the whole 16-4-2 net needs a larger LUT-KCM fabric = the M7.5.3 stretch.)
+
 ## Resource sizing (does it still fit the RP pblock?)
 
 The 4×4 INT8 forward array (16 DSP) is unchanged. Training adds, in the RP:

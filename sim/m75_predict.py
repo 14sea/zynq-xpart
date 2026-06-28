@@ -37,7 +37,9 @@ BASELINE = [[1, 1, 1, 1], [1, 2, 3, 4], [2, 2, 2, 2], [1, 0, 1, 0]]
 
 
 def leaky(z, k):
-    return z if z >= 0 else (z >> k)            # arithmetic shift (Verilog signed)
+    # M6 VPU leaky ReLU (rtl/vpu.v): y = z>=0 ? z : z - (z>>>k)  (slope 1-2^-k).
+    # NOT z>>k — the negative path keeps sign with reduced magnitude.
+    return z if z >= 0 else (z - (z >> k))      # >> is arithmetic for Python ints
 
 
 def requant(a):
