@@ -21,7 +21,13 @@
 #define M7_MNIST_KERNEL_H
 
 #include <stdint.h>
-#include "m7_mnist_vectors.h"   // dims/shifts + INIT + DATASET (+ golden if !M7_BOARD)
+// dims/shifts + INIT + DATASET (+ golden if !M7_BOARD). Defaults to the 64-8-4
+// MNIST vectors; the M7.4-tiny 16-4-2 build (oracle_tiny.py) overrides this with
+// -DM7M_VECTORS_H='"m7_tiny_vectors.h"' — the kernel math is dimension-generic.
+#ifndef M7M_VECTORS_H
+#define M7M_VECTORS_H "m7_mnist_vectors.h"
+#endif
+#include M7M_VECTORS_H
 
 typedef int64_t     i64;
 typedef signed char i8;
@@ -55,14 +61,20 @@ static void m7_mm(const i64 *W, int NR, int NC, int wstride, int transpose,
     for (int i = 0; i < NR; i++) acc[i] = 0;
     i8 Wt[4][4], xt[4];
     int32_t part[4];
+    // Tiles step by 4; when NR or NC is not a multiple of 4 (e.g. the 16-4-2 tiny
+    // net has NOUT=2), the trailing lanes are ZERO-PADDED — both the weight tile
+    // and the activation tile — so the array contributes 0 there and never reads
+    // outside W/ai8. For multiple-of-4 dims (MNIST 64-8-4) the guards are no-ops,
+    // so this stays bit-exact to the prior kernel.
     for (int rt = 0; rt < NR; rt += 4) {
         for (int ct = 0; ct < NC; ct += 4) {
             for (int i = 0; i < 4; i++)
                 for (int j = 0; j < 4; j++)
-                    Wt[i][j] = (i8)m7_q8(m7_wget(W, wstride, transpose, rt + i, ct + j), wshift);
-            for (int j = 0; j < 4; j++) xt[j] = ai8[ct + j];
+                    Wt[i][j] = (rt + i < NR && ct + j < NC)
+                        ? (i8)m7_q8(m7_wget(W, wstride, transpose, rt + i, ct + j), wshift) : 0;
+            for (int j = 0; j < 4; j++) xt[j] = (ct + j < NC) ? ai8[ct + j] : 0;
             array_macc(Wt, xt, part);                 // <-- the 4x4 systolic array
-            for (int i = 0; i < 4; i++) acc[rt + i] += part[i];
+            for (int i = 0; i < 4 && rt + i < NR; i++) acc[rt + i] += part[i];
         }
     }
     int down = 8 - wshift - ashift;

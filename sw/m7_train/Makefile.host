@@ -9,7 +9,10 @@ HEADER   = m7_vectors.h
 MNIST_ORACLE = ../../sim/oracle_mnist.py
 MNIST_HEADER = m7_mnist_vectors.h
 
-.PHONY: check check-hw mnist mnist-header header tu-golden clean
+TINY_ORACLE = ../../sim/oracle_tiny.py
+TINY_HEADER = m7_tiny_vectors.h
+
+.PHONY: check check-hw mnist mnist-header tiny tiny-header header tu-golden clean
 check: $(HEADER) train_xor.c
 	$(CC) $(CFLAGS) -o /tmp/train_xor train_xor.c
 	/tmp/train_xor
@@ -22,6 +25,15 @@ mnist: $(MNIST_HEADER) mnist_host.c m7_mnist_kernel.h
 # Regenerate the MNIST golden header from the oracle.
 mnist-header:
 	python3 $(MNIST_ORACLE) --dump-header $(MNIST_HEADER)
+
+# M7.4-tiny: bit-exact check the small 16-4-2 kernel vs the numpy oracle.
+tiny: $(TINY_HEADER) tiny_host.c m7_mnist_kernel.h
+	$(CC) $(CFLAGS) -o /tmp/tiny_host tiny_host.c
+	/tmp/tiny_host
+
+# Regenerate the tiny golden header from the oracle.
+tiny-header:
+	python3 $(TINY_ORACLE) --dump-header $(TINY_HEADER)
 
 # M7.2: validate the HW-trio split (train_unit modelled in C) bit-exact vs the oracle.
 check-hw: $(HEADER) train_xor_hw.c m7_kernel_hw.h
