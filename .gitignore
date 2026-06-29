@@ -23,6 +23,7 @@ vivado/**/*.gen/
 
 # DFX build scratch / preserved outputs (bitstreams already covered by *.bit)
 vivado/**/m6_out/
+vivado/**/m65_icap/
 vivado/**/hd_visual/
 vivado/**/build_m6.out
 
