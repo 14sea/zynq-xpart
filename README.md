@@ -18,6 +18,10 @@ for the first time, **live** partial reconfiguration (no halt, no cold boot).
 Full plan in `docs/plan.md`. Target-board hardware details under `board/` (copied from the
 EBAZ4205 bring-up).
 
+## License
+
+Apache-2.0 (see `LICENSE` / `NOTICE`). NEORV32 (BSD-3) and prjxray/Vivado are external tools (fetched/used, not vendored).
+
 ## Results (all hardware-verified on the EBAZ4205)
 
 | Milestone | What | Status |

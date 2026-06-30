@@ -1,0 +1,17 @@
+zynq_xpart — live Xilinx-XPART (Partial Reconfiguration) demo on Zynq-7010 (EBAZ4205)
+Copyright 2026 14sea
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components (NOT vendored in this repository; fetched/used separately):
+
+- NEORV32 RISC-V soft-core (https://github.com/stnolting/neorv32) — BSD-3-Clause.
+  Fetched at build time by scripts/setup-deps.sh into rtl_src/ (gitignored).
+- Project X-Ray / prjxray + its database (f4pga) — used as an external tool for
+  locating LUT-INIT config bits; not redistributed here.
+- Xilinx Vivado 2025.2 — proprietary build tool; not redistributed.
+- tiny-tpu / tiny-tpu-v2 — used as REFERENCE ONLY for the M7 training milestones;
+  no RTL is vendored from it.
+
+Local read-only porting copies of upstream/sibling sources (rtl_src/, sw_src/) and
+generated build outputs/bitstreams are gitignored and not distributed.
