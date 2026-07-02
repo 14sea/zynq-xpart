@@ -16,5 +16,11 @@ applies it automatically after cloning NEORV32. To apply manually:
        rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c
     # common.mk rebuilds the image_gen binary automatically on next make
 
-Fix: `.rodata` is placed at its linked offset (sh_addr delta from `.text`), `.data`
-right after (4-aligned), in a zero-filled (calloc) image so gaps read as 0.
+Fix (v2, 2026-07-02, upstream-ready): the raw image is now built from the ELF
+**program headers** — iterate PT_LOAD only, place each segment at
+`p_paddr - load_base` in a zero-filled image, copy exactly `p_filesz` bytes
+(BSS `p_memsz > p_filesz` never enters the ROM image). No section-name or
+layout assumptions, so it is a general "image_gen must emit the ELF load
+image" fix suitable for an upstream NEORV32 PR. Regression: `image_gen -t bin`
+byte-identical to `riscv64-unknown-elf-objcopy -O binary` across 9 firmwares
+(incl. the 4-byte .text→.rodata gap class, .data≠0, and the 13.9 KB MNIST).

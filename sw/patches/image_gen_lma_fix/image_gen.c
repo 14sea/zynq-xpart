@@ -100,6 +100,7 @@ int main(int argc, char *argv[]) {
   FILE *input = NULL, *output = NULL;
   char *input_file = NULL, *output_file = NULL, tmp_string[1024];
   uint32_t checksum = 0;
+  int arg_i = 0;
   unsigned int i = 0, operation = OP_EXE, raw_exe_size = 0, ext_exe_size = 0;
 
   // show help menu if there are no arguments
@@ -111,37 +112,37 @@ int main(int argc, char *argv[]) {
   // ****************************************
   // parse arguments
   // ****************************************
-  for (i = 1; i < argc; i++) {
+  for (arg_i = 1; arg_i < argc; arg_i++) {
     // show help
-    if (strcmp(argv[i], "-h") == 0) {
+    if (strcmp(argv[arg_i], "-h") == 0) {
       print_help();
       return 0;
     }
     // input file
-    else if (strcmp(argv[i], "-i") == 0) {
-      input_file = argv[++i];
+    else if (strcmp(argv[arg_i], "-i") == 0) {
+      input_file = argv[++arg_i];
     }
     // output file
-    else if (strcmp(argv[i], "-o") == 0) {
-      output_file = argv[++i];
+    else if (strcmp(argv[arg_i], "-o") == 0) {
+      output_file = argv[++arg_i];
     }
     // type
-    else if (strcmp(argv[i], "-t") == 0) {
-      i++;
-      if      (strcmp(argv[i], "exe") == 0) { operation = OP_EXE; }
-      else if (strcmp(argv[i], "vhd") == 0) { operation = OP_VHD; }
-      else if (strcmp(argv[i], "bin") == 0) { operation = OP_BIN; }
-      else if (strcmp(argv[i], "coe") == 0) { operation = OP_COE; }
-      else if (strcmp(argv[i], "mem") == 0) { operation = OP_MEM; }
-      else if (strcmp(argv[i], "mif") == 0) { operation = OP_MIF; }
+    else if (strcmp(argv[arg_i], "-t") == 0) {
+      arg_i++;
+      if      (strcmp(argv[arg_i], "exe") == 0) { operation = OP_EXE; }
+      else if (strcmp(argv[arg_i], "vhd") == 0) { operation = OP_VHD; }
+      else if (strcmp(argv[arg_i], "bin") == 0) { operation = OP_BIN; }
+      else if (strcmp(argv[arg_i], "coe") == 0) { operation = OP_COE; }
+      else if (strcmp(argv[arg_i], "mem") == 0) { operation = OP_MEM; }
+      else if (strcmp(argv[arg_i], "mif") == 0) { operation = OP_MIF; }
       else {
-        printf("[ERROR] Invalid type '%s'!\n", argv[i]);
+        printf("[ERROR] Invalid type '%s'!\n", argv[arg_i]);
         return -1;
       }
     }
     // invalid
     else {
-      printf("[ERROR] Invalid flag '%s'!\n", argv[i]);
+      printf("[ERROR] Invalid flag '%s'!\n", argv[arg_i]);
       return -1;
     }
   }
@@ -180,90 +181,45 @@ int main(int argc, char *argv[]) {
   // base address (= entry point)
   uint32_t base_addr = (uint32_t)elf.e_entry;
 
-  // section header
-  Elf32_Shdr *shdrs = malloc(elf.e_shentsize * elf.e_shnum);
-  if (!shdrs) {
+  // ****************************************
+  // build the raw ROM image from the ELF PROGRAM HEADERS (PT_LOAD)
+  // ****************************************
+  // The ROM image must be the ELF *load image*: every PT_LOAD segment placed at
+  // its load address (p_paddr), gaps zero-filled. Iterating sections (.text/
+  // .rodata/.data) and concatenating them is wrong: it drops the alignment gaps
+  // the linker leaves between sections (e.g. a 4-byte pad before an ALIGN(8)
+  // .rodata), shifting everything after the gap relative to its linked address.
+  // Only p_filesz bytes are copied per segment (BSS: p_memsz > p_filesz is
+  // runtime-zeroed RAM, never part of the ROM image).
+
+  Elf32_Phdr *phdrs = malloc(elf.e_phentsize * elf.e_phnum);
+  if (!phdrs) {
     printf("[ERROR] malloc failed!\n");
     return -1;
   }
-  fseek(input, elf.e_shoff, SEEK_SET);
-  if (fread(shdrs, elf.e_shentsize, elf.e_shnum, input) <= 0) {
+  fseek(input, elf.e_phoff, SEEK_SET);
+  if (fread(phdrs, elf.e_phentsize, elf.e_phnum, input) <= 0) {
     printf("[ERROR] Input file read error (%s)!\n", input_file);
     return -2;
   }
 
-  // section string table
-  Elf32_Shdr shstr = shdrs[elf.e_shstrndx];
-  char *shstrtab = read_section(input, &shstr);
-  void *text = NULL;
-  void *rodata = NULL;
-  void *data = NULL;
-  unsigned int text_size = 0;
-  unsigned int rodata_size = 0;
-  unsigned int data_size = 0;
-
-  // scan section headers
-  for (i = 0; i < elf.e_shnum; i++) {
-    const char *section_name = shstrtab + shdrs[i].sh_name;
-    if (strcmp(section_name, ".text") == 0) {
-      text = read_section(input, &shdrs[i]);
-      text_size = (unsigned int)shdrs[i].sh_size;
+  uint32_t load_base = 0xFFFFFFFFu, load_end = 0;
+  for (i = 0; i < elf.e_phnum; i++) {
+    if (phdrs[i].p_type != PT_LOAD || phdrs[i].p_filesz == 0) {
+      continue;
     }
-    if (strcmp(section_name, ".rodata") == 0) {
-      rodata = read_section(input, &shdrs[i]);
-      rodata_size = (unsigned int)shdrs[i].sh_size;
+    if ((uint32_t)phdrs[i].p_paddr < load_base) {
+      load_base = (uint32_t)phdrs[i].p_paddr;
     }
-    if (strcmp(section_name, ".data") == 0) {
-      data = read_section(input, &shdrs[i]);
-      data_size = (unsigned int)shdrs[i].sh_size;
+    if ((uint32_t)phdrs[i].p_paddr + (uint32_t)phdrs[i].p_filesz > load_end) {
+      load_end = (uint32_t)phdrs[i].p_paddr + (uint32_t)phdrs[i].p_filesz;
     }
   }
-
-  fclose(input);
-
-  // ****************************************
-  // generate raw image
-  // ****************************************
-
-  // debug
-//printf(".text:   %d bytes\n", text_size);
-//printf(".rodata: %d bytes\n", rodata_size);
-//printf(".data:   %d bytes\n", data_size);
-
-  // M7.2 root-cause fix (2026-07-02): lay sections out at their LMA offsets instead
-  // of naive concatenation. With the picolibc linker script .rodata is ALIGN(8), so
-  // whenever text_size % 8 == 4 the linker leaves a 4-byte gap that concatenation
-  // dropped — shifting every .rodata byte in the image by -4 vs its linked address.
-  // .text/.rodata have VMA==LMA here; .data's LMA follows .rodata (4-aligned).
-  unsigned int rodata_off = text_size;
-  unsigned int data_off = text_size + rodata_size;
-  for (i = 0; i < elf.e_shnum; i++) {
-    const char *section_name = shstrtab + shdrs[i].sh_name;
-    if (strcmp(section_name, ".text") == 0 && rodata != NULL) {
-      // find .rodata's sh_addr again relative to .text's
-      unsigned int text_addr = (unsigned int)shdrs[i].sh_addr;
-      unsigned int j;
-      for (j = 0; j < elf.e_shnum; j++) {
-        if (strcmp(shstrtab + shdrs[j].sh_name, ".rodata") == 0) {
-          rodata_off = (unsigned int)shdrs[j].sh_addr - text_addr;
-        }
-      }
-      data_off = rodata_off + ((rodata_size + 3u) & ~3u);
-    }
-  }
-
-  // final image size
-  raw_exe_size = data_off + data_size;
-  if (data_size == 0) {
-    raw_exe_size = rodata_off + rodata_size;
-  }
-  if (rodata_size == 0 && data_size == 0) {
-    raw_exe_size = text_size;
-  }
-  if (raw_exe_size == 0) {// input file empty?
+  if (load_end <= load_base) {// no PT_LOAD content?
     printf("[ERROR] Image is empty!\n");
     return -2;
   }
+  raw_exe_size = load_end - load_base;
   if ((raw_exe_size % 4) != 0) {
     printf("[WARNING] Image size is not a multiple of 4 bytes!\n");
   }
@@ -274,16 +230,25 @@ int main(int argc, char *argv[]) {
     ext_exe_size *= 2;
   }
 
-  // construct raw image (zero-filled so alignment gaps read as 0, matching the linker)
+  // construct raw image: zero-filled, each PT_LOAD at (p_paddr - base)
   uint8_t *raw_image = calloc(raw_exe_size, 1);
   uint32_t *raw_image32 = (uint32_t *)raw_image;
   if (!raw_image) {
     printf("[ERROR] malloc failed!\n");
     return -1;
   }
-  memcpy(raw_image,              text,   text_size);   // .text at LMA 0
-  memcpy(raw_image + rodata_off, rodata, rodata_size); // .rodata at its linked LMA
-  memcpy(raw_image + data_off,   data,   data_size);   // .data at its LMA (follows .rodata)
+  for (i = 0; i < elf.e_phnum; i++) {
+    if (phdrs[i].p_type != PT_LOAD || phdrs[i].p_filesz == 0) {
+      continue;
+    }
+    fseek(input, phdrs[i].p_offset, SEEK_SET);
+    if (fread(raw_image + ((uint32_t)phdrs[i].p_paddr - load_base), 1,
+              phdrs[i].p_filesz, input) != phdrs[i].p_filesz) {
+      printf("[ERROR] Input file read error (%s)!\n", input_file);
+      return -2;
+    }
+  }
+  fclose(input);
 
   // --------------------------------------------------------------------------
   // executable for bootloader upload (including header)
@@ -467,14 +432,14 @@ int main(int argc, char *argv[]) {
   else {
     printf("[ERROR] Invalid operation!\n");
     free(raw_image);
-    free(shdrs);
+    free(phdrs);
     fclose(output);
     return -1;
   }
 
   // clean up
   free(raw_image);
-  free(shdrs);
+  free(phdrs);
   fclose(output);
 
   return 0;
