@@ -7,8 +7,12 @@
 > exposed it). With the fix, **M7.2 multi-epoch training on `rm_train` is
 > hardware-verified bit-exact to the oracle** (ep0 469 → ep20 277 → convergence).
 > Full evidence chain + fix: docs/m7_2_dcpdiff.md "ROOT CAUSE (2026-07-02)";
-> fixed tool tracked at sw/patches/image_gen_lma_fix/. The M7.1 "wall-clock settle"
-> and M7.4 "size band" narratives should also be re-read under this lens.
+> fixed tool tracked at sw/patches/image_gen_lma_fix/. **Same-day follow-up: the
+> M7.1 "wall-clock settle" is BUSTED (zero-settle cold start trains bit-exact on a
+> correct image) and M7.4's "size band" was a second real bug — the linker's RAM
+> size defaulted to 8 K (never defsym'd) → .bss/stack collision for the MNIST
+> firmware; with `--defsym,__neorv32_ram_size=16384` the full 64→8→4 MNIST now
+> trains on-board bit-exact (peak 93.8%). See dcpdiff FOLLOW-UP section.**
 
 > **STATUS: M7.0–M7.3+ DONE & hardware-verified; M7.4 host bit-exact, M7.4-tiny (16-4-2) HW-verified
 > on-board bit-exact (2026-06-28).** Builds on M2

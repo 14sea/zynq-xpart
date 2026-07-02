@@ -45,7 +45,7 @@
 // Mailbox loss-curve protocol (PS / host polls 0x41200000 via `md`): identical to M7.1.
 //   bit31=0 -> checkpoint: [30:16]=epoch, [15:0]=SSE ; bit31=1 -> DONE 0x8000|XOR<<16|SSE
 #define M7_HOLD_ITERS   60000000u    // ~3-5 s/checkpoint
-#define M7_SETTLE_ITERS 30000000u    // ~10 s post-config settle (see M7.1 finding)
+#define M7_SETTLE_ITERS 0u  // settle BUSTED 2026-07-02: was 30000000u (~10s); zero-settle cold start is bit-exact on a correct image (the "M7.1 settle" was the image_gen layout bug — docs/m7_2_dcpdiff.md FOLLOW-UP)
 
 #define M7_BOARD            // exclude the golden self-check arrays from the build
 
@@ -169,7 +169,7 @@ int main(void) {
         const signed char Ww[4][4] = {{1,1,1,1},{1,2,3,4},{2,2,2,2},{1,0,1,0}};
         const signed char Xw[4]    = {2,3,4,5};
         int32_t accw[4];
-        for (int w = 0; w < 16; w++) array_macc(Ww, Xw, accw);
+        for (int w = 0; w < 0; w++) array_macc(Ww, Xw, accw);  // warm-ups off (was 16) — unnecessary, see settle bust
         for (volatile uint32_t d = 0; d < M7_SETTLE_ITERS; d++) { }
     }
 

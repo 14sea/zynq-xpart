@@ -53,3 +53,17 @@ copy it over `rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c` BEFORE bakin
 IMEM image (common.mk rebuilds the image_gen binary automatically). Sanity check for
 any suspicious image: `riscv64-unknown-elf-objcopy -O binary main.elf x.bin` and
 word-compare x.bin against the generated `neorv32_imem_image.vhd` — must be identical.
+
+## ⚠️ MANDATORY #2: linker RAM size defsym (2026-07-02)
+
+`sw/common/neorv32.ld` defaults `__neorv32_ram_size` to **8 K** when not defsym'd —
+half the RTL's 16 KB DMEM, and the stack top lands at 0x80002000. Any firmware whose
+.bss + peak stack exceeds 8 KB (e.g. main_mnist.c: 4.7 KB static accumulators +
+4.4 KB i64 stack frames) silently collides .bss into the stack → wild jump → CPU
+reset with no exception (this was the whole M7.4 "size band"). Always link with:
+
+    USER_FLAGS+="-specs=picolibc.specs -Wl,--defsym,__neorv32_ram_size=16384"
+
+and sanity-check `riscv64-unknown-elf-nm main.elf | grep __crt0_ram_last`
+(must be 0x80003fff for 16 KB). If DMEM_SIZE in neorv32_soc*.vhd is ever raised,
+raise the defsym too — the RTL generic alone does NOT move the linker's stack.

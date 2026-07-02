@@ -404,3 +404,50 @@ Fix: `image_gen.c` now places `.rodata` at its linked offset (`sh_addr` delta) a
   checksum golden must come from the linker's view (ELF), never from the artifact
   being tested (the VHD) — B0's original golden was self-referential and blind to the
   shift.
+
+---
+
+# FOLLOW-UP (2026-07-02, same session): M7.1 "settle" and M7.4 "size band" re-examined — both narratives fall
+
+With the image_gen fix in hand, the two sibling gremlins were re-tested on silicon.
+
+## M7.4 MNIST: SOLVED — second independent bug found (linker RAM default)
+- Re-read under the new lens: the current `main_mnist.c` is actually **layout-safe even
+  under the old image_gen** (its `.rodata` holds only int8/int → ALIGN(4) → no gap; the
+  trio family's ALIGN(8) came from the i64 `M7_XP`). And indeed the fixed image alone did
+  NOT cure it — the board still crash-looped (settle heartbeats 0x7C cycling ~1 s).
+- **Real cause: `neorv32.ld` defaults `__neorv32_ram_size` to 8K when no defsym is passed
+  — and none ever was.** The linker laid out .bss + stack in 8 KB regardless of the RTL's
+  16 KB DMEM. MNIST needs ~9.2 KB (`m7_epoch`'s static i64 accumulators = 4.7 KB .bss +
+  main()'s i64 W1 stack frame = 4.4 KB) → **.bss/stack collision**: entering `m7_epoch`
+  zeroes the accumulators straight through main's stack frame → wild return → silent CPU
+  reset, exactly the recorded symptom ("resets with no caught exception"). The XOR
+  trainers' 128 B weight frames fit 8 KB — that's the whole "good size band".
+- The historical "DMEM raised 16→32 KB, didn't help" was a **false negative**: only the
+  RTL generic was raised; the linker still placed the stack top at 8 KB.
+- Fix: `USER_FLAGS+="-Wl,--defsym,__neorv32_ram_size=16384"` (verified
+  `__crt0_ram_last=0x80003FFF`). **Board result: the full 64→8→4 MNIST trains 60 epochs,
+  DONE peak 30/32 (93.8%) / final 28/32 (87.5%) / SSE 5503, and the watcher's per-epoch
+  compare is bit-exact to the numpy oracle: SSE mismatch 0, acc mismatch 0 over 53
+  sampled epochs.** M7.4-full is COMPLETE on the very fabric the "band" narrative blamed.
+
+## M7.1 "wall-clock settle": BUSTED — no settle exists on a correct image
+- Re-read: all 8 builds in the 8/8 delay-predicts-convergence table were *different
+  firmwares* (adding/removing delay code changes `.text`), i.e. fully confounded with the
+  image-layout coin flip; the "isolated maccs are fine" diagnostic compared HW against an
+  in-firmware C recompute — **both sides read the same (possibly shifted) constants, so
+  it was blind to the actual fault**; the single-boot sweep (one firmware, 64 trials, all
+  converged) actually showed that THAT firmware needed no settle at all.
+- **Test: `main.c` with `M7_SETTLE_ITERS=0` AND the 16 warm-up maccs removed — training
+  starts milliseconds after `fpga loadb`.** Board: **ep0 SSE=469 bit-exact, ep20=277,
+  ep40=280, ep60=264, ep80=240 … — value-identical to the 10 s-settle run, straight down
+  the oracle curve to DONE.** (Corroborating: the MNIST run above ships only a ~0.6 s
+  chunked settle and is bit-exact.) The "post-config settle" requirement does not exist;
+  the shipped 10 s busy-wait can be deleted.
+
+## Scoreboard for the whole affair
+Three real bugs, zero FPGA bugs:
+1. `image_gen` drops LMA alignment gaps (.rodata −4 B when `.text%8==4`) — M7.2's entire
+   "in-context-routing limitation", M7.1's "settle", and part of M7.4's history.
+2. Linker RAM size defaulted to 8 K (never defsym'd) — M7.4's crash/hang, the "size band".
+3. (Minor, latent) `image_gen` also mislaid `.data`'s LMA — first exercised by diag4.
