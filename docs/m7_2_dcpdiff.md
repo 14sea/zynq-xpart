@@ -1,3 +1,17 @@
+> # ⚑ SUPERSEDED 2026-07-02 — ROOT CAUSE FOUND, AND IT IS NOT THE FPGA
+> The "build-dependent 7-series-DFX in-context-routing limitation" conclusion below is
+> **WRONG** (kept for the record). The real root cause is a **firmware image-generation
+> bug**: NEORV32's `image_gen.c` concatenates `.text`/`.rodata`/`.data` ignoring LMA
+> alignment gaps; with the picolibc linker script (`.rodata` ALIGN(8)), any firmware
+> with `.text % 8 == 4` gets its whole `.rodata` shifted −4 bytes in the IMEM image, so
+> all constant tables (weights, test vectors) read wrong at runtime while code executes
+> normally. "Stochastic per build" was actually **deterministic per firmware layout**
+> (`.text % 8`) — 9/9 predictions confirmed, incl. the diag2settle "lucky pass"
+> (.text 5248 ≡ 0) and every failing build (.text ≡ 4). Fix + silicon QED (unchanged
+> diag2pad firmware passes bit-exact; full multi-epoch `rm_train` training runs the
+> oracle curve) in the **"ROOT CAUSE (2026-07-02)"** section at the end of this file.
+> Vivado, DFX, routing, placement, and the XC7Z010 are all exonerated.
+
 # M7.2 multi-epoch divergence — investigation summary (TL;DR)
 
 **Symptom:** the HW train_unit trio works for a single epoch, but multi-epoch training on
@@ -308,3 +322,85 @@ Expected tags (same as diag2): B0..B3 = forward y[0] `{19,2,10,-1}` (0x13/0x02/0
   netlist at the same firmware size is reliable; the lottery lives in the DFX flow).
 - Any roll shows `{-5,-3,-8,-3}` (0xFFFFFB/FFFFFD/FFFFF8/FFFFFD) ⇒ attribution WEAKENED —
   reopen deeper P&R/floorplan suspicion (and the Vivado-version experiment gains priority).
+
+---
+
+# ROOT CAUSE (2026-07-02): NEORV32 image_gen drops LMA alignment gaps — NOT the FPGA
+
+Board back online; ran the flat non-DFX control and followed the evidence. Full chain:
+
+## 1. Flat non-DFX control REVERSES the attribution
+- `vivado/flat_m72/build_flat.tcl`: the DFX design minus DFX (same sources, `tpu_rp` =
+  `rm_train` linked flat, no PR_FLOW/partition/pblock), diag2pad firmware.
+- **3/3 flat rolls (different place directives, WNS ~2 ns) fail with the byte-identical
+  `{-5,-3,-8,-3}`**; 3/3 flat rolls with diag2 (small) firmware are correct.
+- Deterministic with the firmware, independent of flow/placement/route ⇒ the entire
+  route-lottery framing was wrong.
+
+## 2. diag4 discriminator localizes to constant-data reads
+`sw/m7_train/diag4.c` (bad-size class): IMEM-as-data checksum over the first 0x2800
+bytes ✓ CORRECT; array with immediate-built weights ✓ RES = {14,40,28,6} exact; array
+fed from `.rodata` ✗ ; INIT-forward ✗ −5. **The array and the CPU are healthy — only
+`.rodata`-sourced constants are wrong.**
+
+## 3. Host-side smoking gun: the image is layout-shifted
+`objcopy -O binary` (LMA-true) vs the generated `neorv32_imem_image.vhd`: identical up
+to `.text` end (0xDFC), then the VHD is **4 bytes short — the `.text`→`.rodata`
+ALIGN(8) gap is missing, every `.rodata` byte sits at (linked address − 4)** in IMEM.
+Code (addresses unshifted) runs fine; every constant table reads shifted garbage.
+286/2733 words mismatched. (Also explains the "array ≈ 0" signature: it is simply the
+deterministic forward of the shifted weight tables, identical in every build of the
+same firmware.)
+
+## 4. The bug, in `sw/image_gen/image_gen.c` (NEORV32, exposed by the picolibc port)
+```c
+memcpy(raw_image,                           text,   text_size);   // start with .text
+memcpy(raw_image + text_size,               rodata, rodata_size); // append .rodata
+memcpy(raw_image + text_size + rodata_size, data,   data_size);   // append .data
+```
+Naive concatenation. The picolibc linker script aligns `.rodata` to 8, so whenever
+`.text % 8 == 4` the linker leaves a 4-byte LMA gap that the concatenation drops.
+(Upstream NEORV32's own linker script never leaves a gap, so the bug is latent there;
+our M2 picolibc port exposed it. It also silently mislays `.data`'s LMA — latent until
+diag4, the first of our firmwares with initialized data.)
+
+## 5. The `.text % 8` law — 9/9 board results predicted
+| firmware | .text | %8 | board |
+|---|---|---|---|
+| diag2 | 4912 | 0 | ✅ correct (always was) |
+| diag2settle | 5248 | **0** | ✅ **the "lucky" pass — no luck involved** |
+| diag3 | 5404 | 4 | ❌ |
+| main.c | 5372 | 4 | ❌ |
+| diag2pad | 5180 | 4 | ❌ (every rebuild: baseline, DSP-pin, G3, reroute×3, icache-off, serialize, flat×3) |
+| diag2ctrl | 3636 | 4 | ❌ (both halves — why "settle" showed nothing) |
+| diag4 | 3580 | 4 | ❌ (B5) |
+So: same-firmware rebuilds never flipped (deterministic ✓); the only "flip" ever
+observed was between *different firmwares* (settle vs pad) — misread as route lottery.
+
+## 6. Fix + silicon QED
+Fix: `image_gen.c` now places `.rodata` at its linked offset (`sh_addr` delta) and
+`.data` after it, in a zero-filled image (fixed copy tracked at
+`sw/patches/image_gen_lma_fix/image_gen.c`; rtl_src is gitignored).
+- Host: fixed VHD == `objcopy -O binary` — 0 mismatches.
+- **Silicon QED 1**: byte-identical diag2pad + fixed image, flat build →
+  **B0–B5 = 19/2/10/−1/999/469 — all six bit-exact to oracle.**
+- **Silicon QED 2 (the original milestone)**: `main.c` full HW-trio multi-epoch trainer
+  (.text 5372 ≡ 4, the previously-fatal class) + fixed image, REAL DFX `rm_train`
+  build (impl_8) → **on-board loss curve follows the oracle: ep0 SSE=469, ep20
+  SSE=277 (previously collapsed to ~0 by ep20), continuing to convergence.**
+
+## 7. What this rewrites
+- M7.2 multi-epoch on `rm_train` is **UNBLOCKED and hardware-verified** — the trio-in-HW
+  trainer works as designed.
+- All "in-context-routing reproducibility limitation" language (this doc, README, plan,
+  m7_plan) is retracted; the negative fix attempts (a/b.1/b.2/G2/G3/G4/CONTAIN_ROUTING/
+  settle-control) were all real experiments but chased a nonexistent physical effect.
+- The M7.1 "post-config settle" and M7.4 "good size band" narratives deserve a re-read
+  under the same lens (settle "cures" that coincided with firmware-size changes are
+  suspect; the M7.4 pass was a `.text % 8 == 0` roll).
+- Methodological lesson (2nd order): the earlier "only same-bitstream controls are
+  trustworthy" note was right but incomplete — the missing control was **same firmware
+  bytes, different flow** (the flat control), which is what broke the case open. And a
+  checksum golden must come from the linker's view (ELF), never from the artifact
+  being tested (the VHD) — B0's original golden was self-referential and blind to the
+  shift.

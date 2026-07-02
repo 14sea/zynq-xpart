@@ -1,5 +1,15 @@
 # Phase 7 — M7: on-chip training (backprop) — the chip learns by itself
 
+> **⚑ 2026-07-02 ROOT-CAUSE UPDATE:** every mention below of the M7.2 multi-epoch
+> "7-series-DFX in-context-routing limitation / build lottery / good size band" is
+> **RETRACTED** — the real cause was a NEORV32 `image_gen` bug (LMA alignment gap
+> dropped when `.text % 8 == 4` → `.rodata` shifted −4 B in IMEM; picolibc port
+> exposed it). With the fix, **M7.2 multi-epoch training on `rm_train` is
+> hardware-verified bit-exact to the oracle** (ep0 469 → ep20 277 → convergence).
+> Full evidence chain + fix: docs/m7_2_dcpdiff.md "ROOT CAUSE (2026-07-02)";
+> fixed tool tracked at sw/patches/image_gen_lma_fix/. The M7.1 "wall-clock settle"
+> and M7.4 "size band" narratives should also be re-read under this lens.
+
 > **STATUS: M7.0–M7.3+ DONE & hardware-verified; M7.4 host bit-exact, M7.4-tiny (16-4-2) HW-verified
 > on-board bit-exact (2026-06-28).** Builds on M2
 > (NEORV32 + 4×4 INT8 systolic array), **M6** (the VPU: bias / Leaky-ReLU / requant forward path),

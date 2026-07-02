@@ -42,6 +42,7 @@ tmp/
 vivado/*/build/
 vivado/*/build*/
 vivado/*/ps_build/
+vivado/**/artifacts/
 
 # Local read-only copies of other projects (kept on disk as porting starting
 # points, never published — they live in their own upstream/sibling repos).

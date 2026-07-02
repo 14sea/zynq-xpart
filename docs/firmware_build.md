@@ -40,3 +40,16 @@ Rebuild the bitstream after every firmware change.
 mailbox at `0xF1000000` (XBUS). `neorv32_soc` brings that out as `mbox_o` →
 AXI-GPIO → the PS reads it at `0x41200000`. Expected value: **`0x001E0046`**
 (RES0=30, RES1=70) — proof the PS sees a real TPU result computed by NEORV32.
+
+## ⚠️ MANDATORY: image_gen LMA fix (2026-07-02)
+
+The stock NEORV32 `sw/image_gen/image_gen.c` concatenates `.text`+`.rodata`+`.data`
+and DROPS LMA alignment gaps. With picolibc's `.rodata` ALIGN(8), any firmware with
+`.text % 8 == 4` gets its whole `.rodata` shifted −4 bytes in the IMEM image —
+constants read wrong at runtime while code runs fine (this was the entire M7.2
+"multi-epoch divergence", see docs/m7_2_dcpdiff.md ROOT CAUSE). The fixed image_gen
+lives at `sw/patches/image_gen_lma_fix/image_gen.c`; after any fresh rtl_src checkout
+copy it over `rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c` BEFORE baking any
+IMEM image (common.mk rebuilds the image_gen binary automatically). Sanity check for
+any suspicious image: `riscv64-unknown-elf-objcopy -O binary main.elf x.bin` and
+word-compare x.bin against the generated `neorv32_imem_image.vhd` — must be identical.
