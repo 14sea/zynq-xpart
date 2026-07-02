@@ -80,7 +80,7 @@ The flows were developed and hardware-verified against these versions (others ma
 | Tool | Version | Notes |
 |---|---|---|
 | Vivado | **2025.2** | DFX flow (`vivado/dfx/build_dfx.tcl`); `/home/test/Xilinx/2025.2/Vivado/bin/vivado` |
-| NEORV32 | **v1.12.9** | `hw_version_c = 0x01120900`; pinned in `scripts/setup-deps.sh`, override `NEORV32_REF=` |
+| NEORV32 | **v1.12.9** | `hw_version_c = 0x01120900`; pinned in `scripts/setup-deps.sh` + `sw/patches/image_gen_lma_fix/` auto-applied. **Intentionally frozen — do not upgrade**: all published silicon results (and every baked ICAP frame/LUT artifact) are bound to this version; new projects should start from current NEORV32 instead (post-2026-04-28 objcopy flow needs no patch) |
 | RISC-V GCC | **`riscv64-unknown-elf-`** | firmware cross-compile (`RISCV_PREFIX=`) |
 | picolibc | system pkg | linked via `-specs=picolibc.specs`; setup-deps applies the errno-guard patch |
 | Python | **3.12.3** | host oracles + bring-up scripts (`/home/test/xilinx/.env`, numpy) |
