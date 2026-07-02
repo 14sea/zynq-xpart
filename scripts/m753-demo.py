@@ -45,28 +45,37 @@ def md1(s):
 
 def poll_until(s, want, timeout, capture=None):
     """poll until md == one of `want` (set); return (matched, captured_dict)."""
+    capture = set(capture or [])
     cap = {}
     t0 = time.time()
     while time.time() - t0 < timeout:
         v = md1(s)
         if v is None:
             continue
-        if capture and (v >> 24) in capture:
-            cap[v >> 24] = v
-        if v in want:
+        tag = v >> 24
+        if tag in capture:
+            cap[tag] = v
+            if not want and capture.issubset(cap):
+                return v, cap
+        if want and v in want:
             return v, cap
     return None, cap
 
 
 def bake(port, seqdir):
     seqs = sorted(glob.glob(os.path.join(seqdir, 'm75_frame_*.seq.bin')))
+    if not seqs:
+        raise RuntimeError(f"no m75_frame_*.seq.bin files found in {seqdir}")
     print(f"[bake] {len(seqs)} frames from {os.path.basename(seqdir)}")
     for f in seqs:
         subprocess.run([sys.executable, HW, '--port', port, 'writeseq', f],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
 
 def main():
+    if len(sys.argv) < 3:
+        print("Usage: m753-demo.py <L1_seq_dir> <L1toL2_seq_dir> [port]", file=sys.stderr)
+        return 2
     l1dir, l2dir = sys.argv[1], sys.argv[2]
     port = sys.argv[3] if len(sys.argv) > 3 else '/dev/ebaz-uart'
     gold = golden()
