@@ -269,3 +269,42 @@ Implications:
 Possible future lead (not pursued): DCP-diff a WORKING bad-class build (diag2settle) vs a
 FAILING bad-class build (diag2pad) — size held ~constant — to isolate the exact array net
 whose route flips correctness. More targeted than the good-vs-bad diff.
+
+---
+
+# M7.2 — flat non-DFX control: BUILT, board test PENDING (2026-07-02)
+
+Purpose (external-review convergence): discriminate "DFX in-context-routing flow" from
+"this part's P&R in general". Same design minus DFX, at bad-class firmware size.
+
+## Build (done, no board available this session)
+- Firmware: `diag2pad.c` re-baked into IMEM — `.text` 10928 B, the exact bad-class size
+  that failed ~6/7 DFX rolls. (Side effect: `rtl_src/.../neorv32_imem_image.vhd` now holds
+  diag2pad; re-bake before any future `vivado/dfx` rebuild.)
+- `vivado/flat_m72/build_flat.tcl`: identical sources to the DFX build (dfx_top, ps BD
+  incl. HWICAP, neorv32_soc_dfx, rm_train file set — `tpu_rp` linked as a plain flat cell),
+  but **no PR_FLOW, no partition_def, no pblock**.
+- Because correctness is a per-build route lottery, ONE flat pass would be weak evidence:
+  built THREE rolls (impl_1/2/3 = place directives Default / AltSpreadLogic_medium /
+  ExtraNetDelay_high). All three: `write_bitstream Complete!`, timing clean
+  (WNS 2.09/1.87/2.04 ns, WHS +0.044/+0.024/+0.036 — far looser than the DFX builds'
+  0.1–0.8 ns; no pblock squeeze). Netlist parity: 17 DSP48E1 (16 PE psum + 1 train_unit
+  qmul), same as the DFX array. 3 distinct bitstreams (md5s differ; impl_1/3 share DSP
+  macro LOCs but differ in fabric routing).
+- Artifacts archived OUTSIDE `.runs` (lesson from the lost diag2settle/diag2pad DCPs):
+  `vivado/flat_m72/artifacts/impl_N/{dfx_top.bit, dfx_top_routed.dcp, timing_summary.rpt,
+  array_fingerprint.txt}` (local only — *.bit/*.dcp gitignored).
+
+## Board procedure (next session, per roll ×3)
+```
+python scripts/uboot-fpga-load.py --op loadb vivado/flat_m72/artifacts/impl_N/dfx_top.bit
+# poll mailbox 0x41200000 (U-Boot: md 0x41200000 1) — diag2pad cycles tags 0xB0..0xB5
+```
+Expected tags (same as diag2): B0..B3 = forward y[0] `{19,2,10,-1}` (0x13/0x02/0x0A/
+0xFFFFFF in low 24 bits), B4 = SGD update 999 (0x3E7), B5 = epoch-0 loss 469 (0x1D5).
+
+## Verdict table
+- All 3 rolls correct ⇒ DFX in-context flow attribution CONFIRMED (flat P&R of the same
+  netlist at the same firmware size is reliable; the lottery lives in the DFX flow).
+- Any roll shows `{-5,-3,-8,-3}` (0xFFFFFB/FFFFFD/FFFFF8/FFFFFD) ⇒ attribution WEAKENED —
+  reopen deeper P&R/floorplan suspicion (and the Vivado-version experiment gains priority).
