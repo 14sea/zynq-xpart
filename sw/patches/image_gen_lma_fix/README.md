@@ -9,7 +9,8 @@ wrong at runtime while code executes normally. This masqueraded for 10 days as a
 "7-series DFX in-context-routing limitation" (see docs/m7_2_dcpdiff.md, ROOT CAUSE
 section, incl. the 9/9 `.text % 8` prediction table and the silicon QED).
 
-This directory holds the FIXED image_gen.c (rtl_src/ is gitignored). To apply:
+This directory holds the FIXED image_gen.c (rtl_src/ is gitignored). `scripts/setup-deps.sh`
+applies it automatically after cloning NEORV32. To apply manually:
 
     cp sw/patches/image_gen_lma_fix/image_gen.c \
        rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c

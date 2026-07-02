@@ -17,7 +17,7 @@
 //     rm_tpuvpu underneath us (the static NEORV32 keeps running across the RP reconfig).
 //
 // Phase 2 (rm_tpuvpu loaded after the host swap; VPU bypassed = legacy array timing):
-//   - post-config SETTLE (M7.1: the freshly-reconfigured array needs wall-clock settle),
+//   - short mailbox-visible pacing window after the swap,
 //   - run m7_forward on the 4 XOR inputs using the weights CARRIED IN DMEM across the
 //     swap, publish DONE | XOR-score. => train-then-yield-then-infer on the learned model.
 //
@@ -25,9 +25,9 @@
 // mailbox / RTL change is needed — the swap window is a fixed spin, and the forward works
 // on either RM (array present in both) so exact swap timing is not correctness-critical.
 //
-// NOTE (M7.2): whether a given rebuild's array computes correctly is the documented
-// build-dependent in-context-routing lottery; if the cold array self-check below prints
-// the wrong RES, rebuild until a correct-route static lands.
+// NOTE (2026-07-02): the old M7.2 build-lottery diagnosis was superseded by the
+// NEORV32 image_gen LMA-gap root cause. Keep this firmware's self-checks, but do not
+// treat a correct rebuild as a routing lottery.
 
 #include <neorv32.h>
 

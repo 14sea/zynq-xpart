@@ -275,7 +275,7 @@ bitstream**, NOT a logic bug:
 - It is **NOT a logic bug**: `tb_train` is bit-exact through 16 epochs, the host twin through 4000, and
   diag2's single on-board epoch is exactly 469. A board divergence by ep20 with proven logic ⇒ a HW
   effect.
-- This is the same *class* as the M7.1 "post-config settle" gremlin (root cause left open there —
+- This is the same *class* as the M7.1 "post-config settle" symptom (root cause left open there —
   FCLK0/PLL jitter, config-time rail droop, or DFX decoupling release), but worse on `rm_train` and not
   time-curable. The `rm_train` RP swaps the VPU for `train_unit` (master register file + a DSP); its
   routing/boundary context near the RP partition pins differs per static build, which plausibly tips a
@@ -430,15 +430,13 @@ host driver `scripts/m73-yield-demo.py`. Live run, PS/NEORV32 never reset:
    PS `md` heartbeat responsive throughout. ⇒ train (1 verified step) → measured yield →
    infer XOR 4/4 on the learned model, computed by the swapped-in RM, no PS reset.
 
-**The M7.2 build lottery, navigated (not solved).** Build 1 of this firmware came up
-*bad-class* (array forward garbage → the 1 SGD step saturated the master to `-32768`). Fix
-that landed a good-class route: **strip the dead `neorv32_uart0_printf`** (NEORV32 uart0 is
-not pinned out — printf was invisible AND bloated the IMEM; .text 7372→5988), which both
-shrinks the IMEM toward the M7.2 good-class size band *and* re-rolls the P&R route. Build 2
-(`m73_yield.c`, mailbox-only) is good-class and bit-exact. This is consistent with M7.2's
-finding that array-correctness is a build-dependent in-context-routing lottery weakly
-correlated with IMEM size — here one informed re-roll sufficed. Allowlist carries the build-2
-hashes (`6b97e62e` full / `3198d966` rm_train / `0dd009c0` rm_tpuvpu); build 1 superseded.
+**Historical note, superseded by the 2026-07-02 root cause.** Build 1 of this firmware came up
+with the old bad signature (array forward garbage → the 1 SGD step saturated the master to
+`-32768`). Stripping dead `neorv32_uart0_printf` (NEORV32 uart0 is not pinned out — printf was
+invisible and bloated IMEM; `.text` 7372→5988) made Build 2 (`m73_yield.c`, mailbox-only)
+bit-exact. This was originally read as an informed P&R re-roll; the later `image_gen` finding
+shows it was a firmware-layout dependency. Allowlist carries the build-2 hashes (`6b97e62e`
+full / `3198d966` rm_train / `0dd009c0` rm_tpuvpu); build 1 superseded.
 
 ### M7.3+ — ICAP checkpoint-to-fabric + runtime attestation  ✅ DONE & HW-VERIFIED (2026-06-27)
 "The chip trains, then writes its learned weights into its own logic, live." After M7
@@ -512,12 +510,14 @@ kernel `sw/m7_train/m7_mnist_kernel.h` (tiled 4×4 matmul; `array_macc` the only
 via `scripts/fetch-mnist.sh` (OSSCI S3 mirror, gitignored); golden header committed so the build
 needs no re-download. Run: `make -C sw/m7_train -f Makefile.host mnist`.
 
-**ON-BOARD (2026-06-28, EBAZ4205, rm_tpuvpu via `fpga loadb`): attempted, BLOCKED by the M7.2-class
-7-series-DFX limit; left as a build-lottery item.** Firmware `sw/m7_train/main_mnist.c` (XBUS
-`array_macc` + `m7_mnist_kernel.h`, per-epoch (epoch, test_correct, SSE) over the PS mailbox;
-decoder `scripts/m7-watch-mnist.py`) was baked into the `rm_tpuvpu` static IMEM and loaded across
-~9 DFX rebuilds. On-silicon instrumentation (staged mailbox heartbeats + a CPU-exception trap
-reporter + isolation tests) established, in order:
+**ON-BOARD FOLLOW-UP (2026-07-02, EBAZ4205, rm_tpuvpu via `fpga loadb`): DONE after the
+linker-RAM fix.** The earlier 2026-06-28 attempts were misdiagnosed as the same build-dependent
+failure as M7.2. Re-reading the evidence after the `image_gen` fix found the real cause:
+`neorv32.ld` defaulted `__neorv32_ram_size` to 8 KB although the RTL DMEM is 16 KB, so the full
+MNIST firmware's `.bss` and stack collided inside `m7_epoch`. Firmware `sw/m7_train/main_mnist.c`
+(XBUS `array_macc` + `m7_mnist_kernel.h`, per-epoch `(epoch, test_correct, SSE)` over the PS
+mailbox; decoder `scripts/m7-watch-mnist.py`) now builds with
+`--defsym,__neorv32_ram_size=16k`. The failed bring-up still usefully established, in order:
 - NEORV32 boots (50 MHz core), the chunked post-config settle runs (a single ~30M busy loop hung on
   some builds — a codegen/placement quirk — so the settle was chunked with interleaved volatile MBOX
   writes, which is reliable), `m7_init` completes.
@@ -528,16 +528,14 @@ reporter + isolation tests) established, in order:
   build whose array was good; a later, smaller build's array instead **hung on the first MAC**.
   DMEM was raised 16→32 KB to rule out stack overflow — it did not change the outcome.
 
-⇒ The 4×4 array's reliability is **build-dependent**: it sits in the reconfigurable partition and its
-in-context routing/behaviour shifts with firmware size, exactly the reproducibility limit M7.2
-documented and closed (cannot be pinned by placement/routing constraints on XC7Z010). The XOR
-trainers (small firmware) land in the "good" size band; the MNIST firmware (~6 KB baked dataset)
-keeps missing it. The 64-8-4 MNIST on-board run is therefore left as a build-lottery item.
+⇒ The 4×4 array was not the limiting factor. With the linker RAM size set to the actual 16 KB DMEM,
+the original 64→8→4 MNIST build trains for 60 epochs on-board: peak 30/32 (93.8%), final 28/32,
+and every sampled SSE / accuracy point matches the numpy oracle.
 
 #### M7.4-tiny — the on-board run, DONE & HW-VERIFIED (2026-06-28)
 
-Rather than keep rerolling the ~14 KB MNIST firmware, **step the net down** so the firmware lands back
-in the verified-good size band: **16(=4×4) → hidden 4 → 2 classes** (MNIST digits 0 vs 1, area-pooled
+Original strategy: step the net down from the ~14 KB MNIST firmware to
+**16(=4×4) → hidden 4 → 2 classes** (MNIST digits 0 vs 1, area-pooled
 28→4). This tiles onto the 4×4 array with no vertical tiling — L1 `W1[4][16]` = **4 horizontal passes**,
 L2 `W2[2][4]` one tile. Same kernel, same Q8.8/INT8 math, same M7.1 path; only the dimensions and the
 baked dataset (4× smaller: 16 vs 64 int8/sample) differ.
@@ -550,20 +548,19 @@ baked dataset (4× smaller: 16 vs 64 int8/sample) differ.
   corrupting layer-1's gradient → now **zero-pads lanes beyond NR/NC** (a no-op for MNIST, regression
   re-checked 0/0/0).
 - **Firmware.** `sw/m7_train/main_tiny.c` = `main_mnist.c` baking the tiny vectors. `.text` **8104 B**
-  vs MNIST 13908 B (~42% smaller) — between the XOR trainers' good band (~6 KB) and the bad MNIST.
+  vs MNIST 13908 B (~42% smaller). This size distinction explained the old false lead, but the
+  later M7.4-full result shows the real blocker was linker RAM sizing, not a good/bad route band.
 - **On-board (EBAZ4205, rm_tpuvpu via `fpga loadb`, PS left in U-Boot).** Built one DFX
-  (`build_dfx.tcl` impl_1 static + impl_5 rm_tpuvpu), loaded the full `dfx_top.bit`. The array landed
-  in the **good band on the first roll** — no miscompute, no reset. The full multi-epoch curve, read
+  (`build_dfx.tcl` impl_1 static + impl_5 rm_tpuvpu), loaded the full `dfx_top.bit`. The full multi-epoch curve, read
   per-epoch over the PS mailbox (`scripts/m7-watch-mnist.py --golden m7_tiny_vectors.h`), is
   **bit-exact to the oracle**: SSE 16066→1999 monotonic, test acc climbing 50%→97.5% (peak 100%),
   every sampled epoch SSE & ok-count == oracle, DONE = peak 40/40, final 39/40, SSE 1999
   (mbox `0xa82707cf`). (The per-epoch dwell is chunked + re-published so the slow `md` poller samples
   every epoch; ~13 s/epoch wall-clock.)
 
-⇒ **M7.4 is HW-VERIFIED on-board.** The substantive result (a real multi-epoch classifier trained on
-the fabric array, accuracy climbing across epochs, bit-exact to the host oracle) runs on silicon once
-the firmware is sized into the good band — the M7.3+ "navigate by shrinking firmware" strategy, which
-here needed **zero** rerolls. The 64-8-4 MNIST stays host-only (its size keeps missing the band).
+⇒ **M7.4 is HW-VERIFIED on-board.** The tiny classifier proved the first on-board MNIST training path;
+the same-day full result above supersedes the old size-band interpretation and brings the original
+64→8→4 classifier on-board too.
 
 ### M7.5.1 — checkpoint the TRAINED tile into the LUT fabric via ICAP  ✅ DONE & HW-VERIFIED (2026-06-28)
 "The chip trains a classifier, then writes its learned weights into its own logic, live." Closes the
@@ -611,7 +608,7 @@ precomputable. The honesty: the firmware publishes the board's ACTUAL trained ti
 and the host verifies it **== the oracle/the bytes being baked** BEFORE baking.
 
 **Pieces.**
-- `sw/m7_train/m752_loop.c`: ONE static firmware, `.text` 8048 B (good band). Phase 1 (rm_tpuvpu):
+- `sw/m7_train/m752_loop.c`: ONE static firmware, `.text` 8048 B. Phase 1 (rm_tpuvpu):
   train the 16-4-2 net, publish a brief curve + the converged `W1[0:4][0:4]` INT8 view (16 values,
   tags 0xE0..0xEF) + `READY` (0x600D0000). Phase 2 (rm_lutkcm, post-swap): VPU path (no weight load —
   baked weights compute) publishing `{POST3..POST0}`.

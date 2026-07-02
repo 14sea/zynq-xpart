@@ -29,6 +29,22 @@ else
   echo "[setup] picolibc patch already applied (or file absent)"
 fi
 
+# image_gen LMA-gap fix: stock NEORV32 v1.12.9 concatenates .text/.rodata/.data
+# and drops linker alignment gaps, corrupting IMEM constants for some picolibc
+# layouts. Keep the local dependency copy deterministic until this is upstreamed.
+ig_src=$root/sw/patches/image_gen_lma_fix/image_gen.c
+ig_dst=$NEORV32_DIR/sw/image_gen/image_gen.c
+if [ -f "$ig_src" ] && [ -f "$ig_dst" ]; then
+  if ! cmp -s "$ig_src" "$ig_dst"; then
+    echo "[setup] patching image_gen.c (LMA-gap fix)"
+    cp "$ig_src" "$ig_dst"
+  else
+    echo "[setup] image_gen LMA-gap patch already applied"
+  fi
+else
+  echo "[setup] WARNING: image_gen patch source or destination missing"
+fi
+
 # firmware build tree (canonical source lives in sw/tpu_firmware/)
 ft=$root/sw_src/neorv32_tpu_sw/tpu_test
 mkdir -p "$ft"

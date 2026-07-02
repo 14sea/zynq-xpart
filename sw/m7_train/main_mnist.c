@@ -5,26 +5,18 @@
 // run on the 4x4 INT8 systolic array (tiled), NEORV32 software does loss / δ /
 // outer-product / full-batch SGD update. This is the M7.1 path (rm_tpuvpu / rm1_tpu
 // array + SW backprop), which is HW-verified multi-epoch — NOT the M7.2 rm_train
-// HW-trio (its multi-epoch is the build-dependent 7-series-DFX routing break).
+// HW-trio path.
 //
 // The shared kernel (m7_mnist_kernel.h) is proven bit-exact against the numpy oracle
 // on the host (mnist_host.c: weight/loss/acc mism=0, test acc 25%->90%). This file
 // adds only the XBUS array_macc leaf accessor so the board reproduces that curve.
 //
-// ON-BOARD STATUS (2026-06-28, EBAZ4205, rm_tpuvpu via fpga loadb): NOT yet running
-// to completion. Extensive on-silicon bring-up (heartbeats over the mailbox at every
-// stage; CPU-exception trap reporter; staged isolation) established: NEORV32 boots,
-// the 4x4 array (single + 200-MAC burst), i64 math, m7_forward and the transpose
-// matmul all compute correctly — but the 4x4 array's reliability is BUILD-DEPENDENT:
-// some P&R rolls of this (larger, ~15 KB) firmware run clean through the array, others
-// hang on the first MAC or reset on entry to the heavy m7_epoch loop, with no CPU
-// exception. This is the same 7-series-DFX in-context-routing reproducibility limit
-// documented (and closed) for M7.2 — the array sits in the reconfigurable partition
-// and its routing/behaviour shifts with firmware size; it can't be pinned by standard
-// placement/routing constraints on XC7Z010. The XOR trainers (smaller firmware) land
-// in the "good" size band; the MNIST firmware (~6 KB baked dataset) keeps missing it.
-// M7.4 is therefore HOST-VERIFIED (bit-exact, the substantive result); the on-board
-// run is left as a build-lottery item. See docs/m7_plan.md §M7.4.
+// ON-BOARD STATUS (2026-07-02, EBAZ4205, rm_tpuvpu via fpga loadb): DONE. The
+// earlier 2026-06-28 failures were not a DFX/build-band effect; the linker had left
+// NEORV32 RAM at its 8 KB default while the RTL DMEM is 16 KB, causing .bss/stack
+// collision in the heavy m7_epoch loop. With the Makefile's 16 KB defsym and the
+// image_gen LMA-gap fix, this 64->8->4 firmware trains for 60 epochs on-board and
+// matches the numpy oracle at every sampled checkpoint. See docs/m7_plan.md §M7.4.
 //
 // Build (bakes neorv32_imem_image.vhd; then rebuild the static via build_dfx.tcl):
 //   make APP_SRC=main_mnist.c NEORV32_HOME=../../rtl_src/neorv32_tpu/neorv32 \
@@ -127,10 +119,8 @@ int main(void) {
         MBOX = 0x7B000000u | ((uint32_t)acc[0] & 0xFFFF);   // array OK (expect ..0x0E)
     }
 
-    // M7.1 post-config SETTLE — wall-clock time for the freshly-(re)configured RP to
-    // settle before compute. CHUNKED with a per-chunk mailbox heartbeat 0x7C0000kk:
-    // a single ~30M busy loop was observed to hang on some P&R builds, whereas the
-    // chunked form (interleaved volatile MBOX writes) is reliable; ~20 x 0.5M total.
+    // Short chunked heartbeat/pacing window before the long training loop. This is
+    // retained for host-side visibility only; no hardware settle requirement remains.
     for (uint32_t kk = 0; kk < 20; kk++) {
         MBOX = 0x7C000000u | kk;
         for (volatile uint32_t d = 0; d < 500000u; d++) { }

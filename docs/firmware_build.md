@@ -48,11 +48,12 @@ and DROPS LMA alignment gaps. With picolibc's `.rodata` ALIGN(8), any firmware w
 `.text % 8 == 4` gets its whole `.rodata` shifted −4 bytes in the IMEM image —
 constants read wrong at runtime while code runs fine (this was the entire M7.2
 "multi-epoch divergence", see docs/m7_2_dcpdiff.md ROOT CAUSE). The fixed image_gen
-lives at `sw/patches/image_gen_lma_fix/image_gen.c`; after any fresh rtl_src checkout
-copy it over `rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c` BEFORE baking any
-IMEM image (common.mk rebuilds the image_gen binary automatically). Sanity check for
-any suspicious image: `riscv64-unknown-elf-objcopy -O binary main.elf x.bin` and
-word-compare x.bin against the generated `neorv32_imem_image.vhd` — must be identical.
+lives at `sw/patches/image_gen_lma_fix/image_gen.c`; `scripts/setup-deps.sh` copies it
+over `rtl_src/neorv32_tpu/neorv32/sw/image_gen/image_gen.c` after cloning NEORV32.
+Re-run setup after any fresh rtl_src checkout BEFORE baking an IMEM image (common.mk
+rebuilds the image_gen binary automatically). Sanity check for any suspicious image:
+`riscv64-unknown-elf-objcopy -O binary main.elf x.bin` and word-compare x.bin against
+the generated `neorv32_imem_image.vhd` — must be identical.
 
 ## ⚠️ MANDATORY #2: linker RAM size defsym (2026-07-02)
 

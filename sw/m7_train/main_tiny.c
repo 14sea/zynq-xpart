@@ -1,16 +1,14 @@
 // main_tiny.c — NEORV32 bare-metal firmware: on-board TINY training (M7.4-tiny).
 //
-// The SMALL-firmware sibling of main_mnist.c, sized to fit the EBAZ4205 "good
-// build band" so the multi-epoch training actually runs ON-BOARD. Trains a
+// The SMALL-firmware sibling of main_mnist.c. Trains a
 // 16(=4x4)->4->2 leaky-MLP to classify MNIST digits 0 vs 1: forward W·x AND
 // backward Wᵀ·δ on the 4x4 INT8 systolic array (tiled), NEORV32 SW does loss /
 // δ / outer-product / full-batch SGD update. M7.1 path (rm_tpuvpu array + SW
 // backprop, HW-verified multi-epoch) — NOT the M7.2 rm_train HW-trio.
 //
-// Why tiny: the 64-8-4 MNIST firmware (main_mnist.c) is host-bit-exact but its
-// ~6 KB baked dataset pushed IMEM into the M7.2-class 7-series-DFX "bad band"
-// (array miscompute/reset). The tiny net bakes 4x less data (16 vs 64 int8 per
-// sample), shrinking IMEM toward the XOR trainers' verified-good size band.
+// Historical note: tiny was created while the full 64-8-4 MNIST failures were still
+// misattributed to firmware-size sensitivity. The full build is now on-board too
+// after the image_gen and linker-RAM fixes.
 //
 // The shared kernel (m7_mnist_kernel.h) is proven bit-exact vs sim/oracle_tiny.py
 // on the host (tiny_host.c: weight/loss/acc mism=0, test acc 50%->97.5%, peak
@@ -122,7 +120,7 @@ int main(void) {
         MBOX = 0x7B000000u | ((uint32_t)acc[0] & 0xFFFF);   // array OK (expect ..0x0E)
     }
 
-    // M7.1 post-config SETTLE — chunked busy loop with per-chunk heartbeat 0x7C0000kk.
+    // Short chunked heartbeat/pacing window before the long training loop.
     for (uint32_t kk = 0; kk < 20; kk++) {
         MBOX = 0x7C000000u | kk;
         for (volatile uint32_t d = 0; d < 500000u; d++) { }

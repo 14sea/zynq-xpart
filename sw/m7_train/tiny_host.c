@@ -1,8 +1,8 @@
 // tiny_host.c — M7.4-tiny HOST validator for the shared backprop kernel.
 //
-// Same as mnist_host.c but for the small 16-4-2 net (oracle_tiny.py), whose
-// firmware is sized to fit the EBAZ4205 "good build band" so the multi-epoch
-// training runs ON-BOARD. Runs the SAME kernel the NEORV32 firmware runs
+// Same as mnist_host.c but for the small 16-4-2 net (oracle_tiny.py), which was
+// the first MNIST variant to run multi-epoch ON-BOARD. Runs the SAME kernel the
+// NEORV32 firmware runs
 // (m7_mnist_kernel.h, dimension-generic), replaying the host-seeded init + baked
 // 4x4 dataset from m7_tiny_vectors.h, and bit-exact compares final master weights
 // + full loss curve + per-epoch test accuracy against the numpy oracle.

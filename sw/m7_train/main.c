@@ -53,7 +53,7 @@
 typedef int64_t i64;
 
 // ── 4x4 array over XBUS (forward W·x and transpose Wᵀ·δ; raw INT32 acc) ──────────
-// hw_flush: empirical post-config scrub before each matmul (see M7.1 main.c note).
+// hw_flush resets the array datapath before each matmul; no post-config settle is required.
 static void hw_flush(void) {
     for (int r = 0; r < 4; r++) { TPU_W_ADDR = (uint32_t)(r << 2); TPU_W_DATA4 = 0; }
     TPU_CTRL = 0x10;
@@ -163,8 +163,8 @@ int main(void) {
         neorv32_uart0_printf("train_unit master round-trip mism = %d (expect 0)\n", mm);
     }
 
-    // M7.1 post-config SETTLE (still required: the first SGD step must not land on a
-    // bad matmul — see m7_plan.md §M7.1 "post-config settle"). Warm-up + ~10 s hold.
+    // Historical M7.1 warm-up/settle hook, now intentionally disabled. The old settle
+    // symptom was the image_gen layout bug, not a hardware initialization requirement.
     {
         const signed char Ww[4][4] = {{1,1,1,1},{1,2,3,4},{2,2,2,2},{1,0,1,0}};
         const signed char Xw[4]    = {2,3,4,5};

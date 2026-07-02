@@ -97,7 +97,7 @@ miscomputes deterministically on silicon (array returns ≈0 → requant → `{-
 
 ⇒ The divergence is **NOT** a setup/hold/routing/constraint problem. It is a
 **placement-dependent physical / config-time effect that STA does not model** — the same
-*class* as the M7.1 "post-config settle" gremlin (GSR / reset-release / config-time
+*class* as the M7.1 "post-config settle" symptom (GSR / reset-release / config-time
 startup), but here it is placement-sensitive and so survives a wall-clock settle. A clean,
 repeatable wrong value (not a per-load lottery) means the bad floorplan brings the array up
 **not accumulating** (psum chain effectively held), deterministically for that build.
@@ -249,7 +249,7 @@ isolation, nor reset discipline on this part. Confirmed pivot to M7.3 on the sin
 Remaining untested lead (different category, not pursued here): a **placement-dependent
 post-config SETTLE before the forward** — the diag forward is computed at boot with no
 settle; the good build happens to be correct without it, the bad build may need a longer
-wall-clock settle (cf. the M7.1 settle gremlin). Worth a cheap test (add a multi-second
+wall-clock settle (cf. the M7.1 settle symptom). Worth a cheap test (add a multi-second
 delay before the forward, rebuild, reload) before fully closing.
 
 ---
@@ -409,7 +409,7 @@ Fix: `image_gen.c` now places `.rodata` at its linked offset (`sh_addr` delta) a
 
 # FOLLOW-UP (2026-07-02, same session): M7.1 "settle" and M7.4 "size band" re-examined — both narratives fall
 
-With the image_gen fix in hand, the two sibling gremlins were re-tested on silicon.
+With the image_gen fix in hand, the two sibling narratives were re-tested on silicon.
 
 ## M7.4 MNIST: SOLVED — second independent bug found (linker RAM default)
 - Re-read under the new lens: the current `main_mnist.c` is actually **layout-safe even
