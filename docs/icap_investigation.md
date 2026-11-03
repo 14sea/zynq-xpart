@@ -7,7 +7,9 @@
 > NEORV32 → ICAPE2, no PS in the reconfiguration loop, T2.3) are hardware-verified.
 > See **[RESOLUTION](#resolution-2026-06-07--icap-from-inside-works)** below for the
 > full working recipe and the one missing piece (`devcfg.CTRL[PCAP_PR]`) that defeated
-> all earlier attempts. The sections below the resolution are the original (pre-solution)
+> all earlier attempts. **[2026-11-03: that piece is documented in AMD UG585 v1.15,
+> *PL Configuration Paths* ("set the [PCAP_MODE] bit = 1 and the [PCAP_PR] bit = 0" for
+> ICAP) — it was our oversight, not an undocumented behaviour. See `docs/PRIOR_ART.md`.]** The sections below the resolution are the original (pre-solution)
 > investigation, kept verbatim as the historical record of what was tried and why it
 > looked like a wall.
 >
@@ -61,7 +63,9 @@ symptom from approach #1. (Note: it is **`PCAP_PR` bit 27**, not `PCAP_MODE` bit
    `bit_00400d9a_073_15` = FAR **0x00400d9a**, word 73, bit 15.
 3. **Extract the frame from the RAW .bit FDRI word stream** (`hwicap-make-framewrite.py`),
    NOT from prjxray `.bits` — the `.bits` model omits the per-frame **ECC word (word 50)**,
-   so a reconstructed frame writes wrong data and silently does nothing. The raw extractor
+   so a reconstructed frame writes wrong data and silently does nothing. *(2026-11-03:
+   not re-tested in isolation from the PCAP_PR change; UG470 does not say frame writes
+   check ECC. Treat as an observation, not an established rule.)* The raw extractor
    self-validates: the single-bit-xor word is INIT (frame word 73), a second multi-bit
    word is the ECC (frame word 50), exactly 23 words apart.
 4. **Build a minimal write sequence**: dummy×8, sync, RCRC, IDCODE(0x03722093), WCFG, FAR,
@@ -127,8 +131,10 @@ own the config engine — it only works with **`PCAP_PR=0`**, same as writes; (2
   LUT-INIT word was recovered), but the chunked-FDRO boundary **drifts run-to-run** (two
   back-to-back reads differed by ~18 words), so a clean automated before/after frame compare
   isn't reliable. The single-frame **write is verified observably via GPIO** regardless. A
-  clean fix would need a deeper HWICAP read FIFO (not a parameter on the stock IP) or a
-  bench-side concurrent RFO drain faster than the ICAP stream.
+  clean fix would need a deeper HWICAP read FIFO or a bench-side concurrent RFO drain
+  faster than the ICAP stream. **[2026-11-03 correction: the read FIFO depth *is* a stock-IP
+  parameter — PG134 offers 128 or 256 (actual depth one less); 256 fits pad + frame = 202
+  words. The earlier "not a parameter" was wrong.]**
 
 ---
 

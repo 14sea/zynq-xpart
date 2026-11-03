@@ -3,7 +3,9 @@
 Migrate `rot_tpu_handoff` — which hit its ceiling on the Altera **EP4CE6** ("XPART minus
 liveness": mode-H = `.rbf` LUT surgery + EPCS staging + **cold boot**) — onto the **Xilinx
 XC7Z010**, and use the Zynq's native **ICAP + PCAP + Partial Reconfiguration (DFX)** to achieve,
-for the first time, **live** partial reconfiguration (no halt, no cold boot).
+for the first time in this project line, **live** partial reconfiguration (no halt, no cold boot).
+The technique itself is old — Xilinx's own XPART/HWICAP work (Blodget et al., 2003) and
+several later Zynq papers did live ICAP frame edits; see [docs/PRIOR_ART.md](docs/PRIOR_ART.md).
 
 - **Track A (foundation)**: DFX module hot-swap over PCAP — the partial bitstream applied live
   via `fpga loadbp` (U-Boot; how M3 was verified here) or `fpgautil -f Partial` (Linux); the
@@ -53,8 +55,10 @@ deterministic, reversible single-frame LUT-INIT edit runs over ICAPE2, the fabri
 own CRAM with no reset and no PCAP/`loadbp`. Two flavours work — **PS-driven** via AXI HWICAP,
 and the headline **soft-core-driven** where the in-PL **NEORV32** reads the frame from a shared
 BRAM and drives ICAPE2 itself (no PS in the reconfiguration loop). The one missing piece was
-handing the config-engine MUX to ICAP via `devcfg.CTRL[PCAP_PR]` — see
-[docs/icap_investigation.md](docs/icap_investigation.md) for the full recipe.
+handing the config-engine MUX to ICAP via `devcfg.CTRL[PCAP_PR]` — a requirement AMD documents
+in UG585 (*PL Configuration Paths*) that we had missed — see
+[docs/icap_investigation.md](docs/icap_investigation.md) for the full recipe and
+[docs/PRIOR_ART.md](docs/PRIOR_ART.md) for which of the recorded pitfalls are vendor-documented.
 
 ## Isolation principle (hard constraint)
 This directory is a **standalone project**. The contents of `rtl_src/`, `sw_src/`, `board/`, and
