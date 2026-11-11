@@ -63,9 +63,11 @@ symptom from approach #1. (Note: it is **`PCAP_PR` bit 27**, not `PCAP_MODE` bit
    `bit_00400d9a_073_15` = FAR **0x00400d9a**, word 73, bit 15.
 3. **Extract the frame from the RAW .bit FDRI word stream** (`hwicap-make-framewrite.py`),
    NOT from prjxray `.bits` — the `.bits` model omits the per-frame **ECC word (word 50)**,
-   so a reconstructed frame writes wrong data and silently does nothing. *(2026-11-03:
-   not re-tested in isolation from the PCAP_PR change; UG470 does not say frame writes
-   check ECC. Treat as an observation, not an established rule.)* The raw extractor
+   so a reconstructed frame writes wrong data and silently does nothing. *(2026-11-11 board
+   test, PCAP_PR = 0: a frame whose only error is the ECC word — stale, or bits 0..12
+   cleared — **is applied**; frame writes do not check ECC, so "silently does nothing" was
+   not caused by the ECC word (most likely the PCAP_PR hand-off). Extracting from the raw
+   .bit remains the rule: a .bits reconstruction can also drop unmodelled bits.)* The raw extractor
    self-validates: the single-bit-xor word is INIT (frame word 73), a second multi-bit
    word is the ECC (frame word 50), exactly 23 words apart.
 4. **Build a minimal write sequence**: dummy×8, sync, RCRC, IDCODE(0x03722093), WCFG, FAR,

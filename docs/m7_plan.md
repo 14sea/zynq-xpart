@@ -461,8 +461,9 @@ size). **Hard-won lesson: do NOT put two FAR-sets in one envelope** — the buff
 mis-commits to the new FAR and corrupts the array (mailbox went all-saturated `0x7F7F7F7F`;
 cleared by a full `loadb`). Two separate writes are clean. *(2026-11-03: consistent with
 UG470's buffered frame write — the rule applies to non-contiguous FAR sets; contiguous
-frames can share one FDRI write via FAR auto-increment plus a pad frame (UG470 p.102), and
-MFW is a different command. See `docs/PRIOR_ART.md`.)*
+frames can share one FDRI write via FAR auto-increment plus a pad frame (UG470 p.102) —
+board-verified 2026-11-11 with a 3-frame write starting at F−1 — and MFW is a different
+command. See `docs/PRIOR_ART.md`.)*
 
 **Evidence (live silicon, PS/NEORV32 never reset).** Board on the impl_7 LUT-KCM static
 (`tpu_vpu_firmware`, mailbox `0x1019391F` = PE[0][0]=1). devcfg `PCAP_PR`←0; ICAP healthy
